@@ -27,7 +27,7 @@
 | 删除/批量移入回收站 | 已从代码确认但尚未实测 | POST `/drive/v1/files:batchTrash`，ids | 强制确认对象，UI 二次确认 |
 | 收藏 | 尚未确认 | 服务端字段及写入语义未核实 | 未实现 |
 | 上传 | 尚未确认 | 本地文件上传初始化、分片、存储授权完整链路未核实 | 未实现；不把 URL 离线任务当上传 |
-| 下载链接 | 已从代码确认但尚未实测 | GET `/drive/v1/files/{id}?usage=FETCH`，web_content_link | 详情模型与 API；下载 UI 未接入 |
+| 下载链接 | 已从代码确认但尚未实测 | GET `/drive/v1/files/{id}?usage=FETCH`，web_content_link | 详情模型与 API；下载 UI 已接入，真实链路待测 |
 | Range/续传 | 尚未确认 | 必须对真实下载 CDN 验证 206、Content-Range、ETag | 未启用暂停和续传 |
 | 离线创建 | 已从代码确认但尚未实测 | B OfflineDownload；POST files，upload_type=UPLOAD_TYPE_URL | 未实现 |
 | 离线查询/取消/重试 | 已从代码确认但尚未实测 | B OfflineList/Delete/Retry；tasks 与单数 task 契约不一致需验证 | 未实现 |

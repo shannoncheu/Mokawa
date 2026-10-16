@@ -203,7 +203,7 @@ impl Render for Mokawa {
                 .bg(rgb(if highlighted { 0x30374f } else { 0x191c28 }))
                 .hover(|s| s.bg(rgb(0x292f42)))
                 .child(if folder { "▣" } else { "▤" })
-                .child(div().flex_1().child(file.name.clone()))
+                .child(div().flex_1().min_w_0().truncate().child(file.name.clone()))
                 .child(div().text_sm().text_color(rgb(0xa3acc3)).child(if folder {
                     "Folder".into()
                 } else {
@@ -422,6 +422,7 @@ pub fn run() {
                 }),
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(760.), px(560.))),
+                app_id: Some(mokawa::settings::APP_ID.into()),
                 window_background: gpui::WindowBackgroundAppearance::Opaque,
                 ..Default::default()
             },

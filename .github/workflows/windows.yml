@@ -27,6 +27,18 @@ jobs:
         run: cargo clippy --locked --features desktop --all-targets -- -D warnings
       - name: Build Windows x64 executables
         run: cargo build --locked --release --features desktop --bins
+      - name: Verify executable metadata and system DLL imports
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $version = (Get-Item target/release/mokawa.exe).VersionInfo
+          if ($version.ProductName -ne 'Mokawa') { throw 'Incorrect product metadata' }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products '*' -find 'VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+          if (!$dumpbin) { throw 'dumpbin was not found' }
+          & $dumpbin /DEPENDENTS target/release/mokawa.exe | Set-Content dist/imports.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect PE imports' }
+          if (Select-String -Path dist/imports.txt -Pattern 'VCRUNTIME[0-9]|MSVCP[0-9]' -Quiet) { throw 'Unexpected dynamic MSVC runtime dependency' }
       - name: Prepare dependency metadata
         shell: pwsh
         run: |
@@ -40,7 +52,7 @@ jobs:
         run: |
           & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" installer/mokawa.nsi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Verify silent install and uninstall
+      - name: Verify silent install
         shell: pwsh
         run: |
           $installer = Start-Process dist/Mokawa-0.1.0-x64-setup.exe -ArgumentList '/S' -Wait -PassThru
@@ -48,13 +60,20 @@ jobs:
           $root = "$env:LOCALAPPDATA\Programs\Mokawa"
           if (!(Test-Path "$root\mokawa.exe")) { throw "Executable missing" }
           if (!(Test-Path "$root\mokawa-auth.exe")) { throw "Auth helper missing" }
-          $uninstaller = Start-Process "$root\Uninstall.exe" -ArgumentList '/S' -Wait -PassThru
-          if ($uninstaller.ExitCode -ne 0) { throw "Uninstall failed" }
-          if (Test-Path "$root\mokawa.exe") { throw "Uninstall left executable" }
       - name: Try native window smoke scenarios
         continue-on-error: true
         shell: pwsh
-        run: ./scripts/windows-smoke.ps1 -Executable "$PWD/target/release/mokawa.exe"
+        run: ./scripts/windows-smoke.ps1 -Executable "$env:LOCALAPPDATA/Programs/Mokawa/mokawa.exe"
+      - name: Verify silent uninstall
+        if: always()
+        shell: pwsh
+        run: |
+          $root = "$env:LOCALAPPDATA\Programs\Mokawa"
+          if (Test-Path "$root\Uninstall.exe") {
+            $uninstaller = Start-Process "$root\Uninstall.exe" -ArgumentList '/S' -Wait -PassThru
+            if ($uninstaller.ExitCode -ne 0) { throw "Uninstall failed" }
+            if (Test-Path "$root\mokawa.exe") { throw "Uninstall left executable" }
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -63,6 +82,7 @@ jobs:
           path: |
             dist/Mokawa-0.1.0-x64-setup.exe
             dist/dependency-licenses.json
+            dist/imports.txt
             dist/smoke-results.json
             dist/*.png
             target/release/mokawa.exe

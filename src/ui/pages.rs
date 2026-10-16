@@ -116,8 +116,8 @@ impl Mokawa {
                 .child(div().text_3xl().child("Settings"))
                 .child("Appearance")
                 .child(div().text_sm().text_color(rgb(0xaab3ce)).child("Dark · System window frame · Solid background"))
-                .child(Self::button(if self.grid{"Use detailed rows"}else{"Use compact rows"}).on_click(cx.listener(|this,_,_,cx|{this.grid=!this.grid;cx.notify();})))
-                .child(Self::button(if self.hide_details{"Show file details"}else{"Hide file details"}).on_click(cx.listener(|this,_,_,cx|{this.hide_details=!this.hide_details;cx.notify();})))
+                .child(Self::button(if self.grid{"Use detailed rows"}else{"Use compact rows"}).on_click(cx.listener(|this,_,_,cx|{this.grid = !this.grid;cx.notify();})))
+                .child(Self::button(if self.hide_details{"Show file details"}else{"Hide file details"}).on_click(cx.listener(|this,_,_,cx|{this.hide_details = !this.hide_details;cx.notify();})))
                 .child(Self::button("Save preferences").on_click(cx.listener(|this,_,_,cx|{
                     if this.saving_preferences{return;}this.saving_preferences=true;
                     let preferences=Preferences{compact_rows:this.grid,hide_details:this.hide_details};
