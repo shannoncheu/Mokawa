@@ -1,0 +1,58 @@
+name: Windows x64
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-test-package:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust
+        shell: pwsh
+        run: rustup show
+      - name: Format
+        run: cargo fmt --check
+      - name: Core and mock tests
+        run: cargo test --locked --all-targets
+      - name: Check native UI
+        run: cargo check --locked --features desktop --all-targets
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Build Windows x64 executables
+        run: cargo build --locked --release --features desktop --bins
+      - name: Prepare dependency metadata
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          cargo metadata --locked --format-version 1 | Set-Content -Encoding utf8 dist/dependency-licenses.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install NSIS
+        run: choco install nsis --no-progress -y
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" installer/mokawa.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify silent install and uninstall
+        shell: pwsh
+        run: |
+          $installer = Start-Process dist/Mokawa-0.1.0-x64-setup.exe -ArgumentList '/S' -Wait -PassThru
+          if ($installer.ExitCode -ne 0) { throw "Install failed" }
+          $root = "$env:LOCALAPPDATA\Programs\Mokawa"
+          if (!(Test-Path "$root\mokawa.exe")) { throw "Executable missing" }
+          if (!(Test-Path "$root\mokawa-auth.exe")) { throw "Auth helper missing" }
+          $uninstaller = Start-Process "$root\Uninstall.exe" -ArgumentList '/S' -Wait -PassThru
+          if ($uninstaller.ExitCode -ne 0) { throw "Uninstall failed" }
+          if (Test-Path "$root\mokawa.exe") { throw "Uninstall left executable" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Mokawa-windows-x64-unsigned
+          path: |
+            dist/Mokawa-0.1.0-x64-setup.exe
+            dist/dependency-licenses.json
+            target/release/mokawa.exe
+            target/release/mokawa-auth.exe

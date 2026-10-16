@@ -1,0 +1,41 @@
+[package]
+name = "mokawa"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Mokawa — A calmer way to manage your files."
+
+[features]
+default = []
+desktop = ["dep:gpui", "dep:unicode-segmentation"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util"] }
+tokio-util = "0.7"
+futures-util = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+secrecy = { version = "0.10", features = ["serde"] }
+gpui = { version = "=0.2.2", optional = true, default-features = false, features = ["windows-manifest"] }
+unicode-segmentation = { version = "1", optional = true }
+rpassword = "7"
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[dev-dependencies]
+wiremock = "0.6"
+tempfile = "3"
+
+[[bin]]
+name = "mokawa"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "mokawa-auth"
+path = "src/bin/auth.rs"
