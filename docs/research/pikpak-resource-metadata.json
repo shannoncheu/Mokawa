@@ -1,0 +1,1 @@
+{"resource":"https://pikpak.ai/mcp","authorization_servers":["https://user.mypikpak.com"],"scopes_supported":["files:read","files:write","files:manage","files:purge","cloud_download","share","invite","account"],"bearer_methods_supported":["header"]}

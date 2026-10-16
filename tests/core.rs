@@ -257,3 +257,16 @@ fn sign_out_invalidates_pending_session_writes() {
         Err(Error::Cancelled)
     ));
 }
+
+#[test]
+fn ime_selection_is_relative_to_replacement_with_non_ascii_prefix() {
+    use mokawa::state::composition_selection;
+    let document = "目录 old suffix";
+    let insertion = "目录 ".len();
+    let replacement = "界😀";
+    let range = composition_selection(replacement, 1..3, insertion);
+    let updated = document.replacen("old", replacement, 1);
+    assert_eq!(&updated[range], "😀");
+    let clamped = composition_selection(replacement, 0..usize::MAX, insertion);
+    assert_eq!(&updated[clamped], replacement);
+}

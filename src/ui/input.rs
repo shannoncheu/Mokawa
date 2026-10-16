@@ -179,6 +179,7 @@ impl TextInput {
             return self.content.len();
         }
         line.closest_index_for_x(position.x - bounds.left())
+            .min(self.content.len())
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -342,8 +343,9 @@ impl EntityInputHandler for TextInput {
         }
         self.selected_range = new_selected_range_utf16
             .as_ref()
-            .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .map(|new_range| new_range.start + range.start..new_range.end + range.end)
+            .map(|range_utf16| {
+                mokawa::state::composition_selection(new_text, range_utf16.clone(), range.start)
+            })
             .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
 
         cx.notify();

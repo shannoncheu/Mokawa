@@ -11,7 +11,7 @@
 
 | 能力 | 状态 | 来源/接口与限制 | Mokawa 状态 |
 |---|---|---|---|
-| 官方第三方授权/客户端注册 | 尚未确认 | 官方 Connected Apps/CLI 已确认支持 OAuth；尚缺 Mokawa 桌面注册和可直接实现的协议契约 | 集成阻塞项，见下文官方资料更新 |
+| 官方第三方授权/客户端注册 | 尚未确认 | 官方 OIDC/MCP 发现端点已实际 GET 200；原生注册政策与 REST Token 适用性未确认 | 集成阻塞项，见下文官方资料更新 |
 | 旧密码登录 | 已从代码确认但尚未实测 | A/B 有旧实现；最新官方 CLI 文档注明密码登录不再支持 | 仅保留模型/Mock，用户入口已关闭 |
 | Token 刷新 | 已从代码确认但尚未实测 | A `/v1/auth/token`，refresh_token grant | Mock 覆盖刷新与轮换 |
 | 验证码 | 已从代码确认但尚未实测 | `/v1/shield/captcha/init`；可能返回验证 URL | 返回挑战即中止；不复制签名逻辑 |
@@ -57,4 +57,6 @@
 4. 官方 [pikcloud/pikpak-open](https://github.com/pikcloud/pikpak-open/tree/96dfc7934cd7342056444ca912f225b9dfd4d33f) 目前公开的 SDK 申请流程针对 Telegram Android AAR，不等于 Windows 通用 OAuth 注册。不能将 Android 包名/签名申请机制套到 Mokawa。
 5. 官方 PAT 用于个人无人值守脚本，官方建议第三方应用使用自己的授权流程。本版不以“粘贴 PAT”取代桌面授权。
 
-结论：官方授权能力已获得文档证据；Mokawa 的注册方式、端点、客户端类型、PKCE/loopback 支持、scope 与文件 REST API 的 token audience 尚未确认。下一阶段需取得明确协议契约后实现系统浏览器授权、state/PKCE 校验、取消与超时、凭据安全保存，然后由用户在本机授权测试。当前没有启动真实登录、没有采集凭据、没有发送申请邮件，也没有任何真实文件 API 验收结果。
+结论：官方授权能力已获得文档证据；公开发现文档已确认授权/设备/Token/注册/撤销端点和 S256；Mokawa 原生客户端注册规则、loopback 接收策略以及 scope 与文件 REST API 的 token audience 尚未确认。下一阶段需取得明确协议契约后实现系统浏览器授权、state/PKCE 校验、取消与超时、凭据安全保存，然后由用户在本机授权测试。当前没有启动真实登录、没有采集凭据、没有发送申请邮件，也没有任何真实文件 API 验收结果。
+
+公开端点的实际 GET 结果、原始 JSON 和剩余注册问题见 [官方 OAuth 发现调查](OAUTH.md)。这更新了早期“没有可用官方授权资料”的调查，不代表真实登录已验证。

@@ -35,7 +35,7 @@ GPUI 固定 crates.io `=0.2.2`，依赖锁定于 `Cargo.lock`；检查的是该�
 
 PikPak 官方现已公开 Connected Apps，并在 [官方 CLI 文档](https://github.com/pikcloud/skills/blob/main/skills/pikpak-cli/SKILL.md) 说明浏览器 OAuth 和设备授权，且注明密码登录不再支持。此前参考客户端的密码 API 仅保留作协议/Mock 研究，`mokawa-auth.exe` 默认明确报授权接入未完成，不再索取密码。
 
-**Mokawa 的桌面客户端注册、OAuth 端点/权限/回调契约、Token 对文件 API 的适用范围尚未确认，因此当前版本不能为新用户完成登录。** 不应通过复制官方 CLI 的私有 client ID/secret、读取它的凭据文件或让用户导出会话来绕过。
+公开 OIDC 端点和 S256 已确认，见 [OAuth 调查](docs/OAUTH.md)。**Mokawa 的桌面客户端注册、OAuth 原生客户端权限/回调契约、Token 对文件 API 的适用范围尚未确认，因此当前版本不能为新用户完成登录。** 不应通过复制官方 CLI 的私有 client ID/secret、读取它的凭据文件或让用户导出会话来绕过。
 
 账号页可以打开官方 Connected Apps 说明，并尝试读取本应用系统凭据库已有会话。没有真实会话时会报错，不显示伪造文件。F5 刷新文件；搜索仅过滤已加载的当前目录。双击文件夹进入，Ctrl 点击多选。名称输入用于新建目录和重命名。删除需要确认。选择单个文件后点击 Download，使用原生目录选择器创建下载任务。断电/强制终止可能留下 `.mokawa.part`，当前不会静默删除它或覆盖文件；重新下载前应人工核对和清理对应临时文件。
 

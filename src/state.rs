@@ -36,3 +36,27 @@ impl BrowserState {
         out
     }
 }
+
+/// IME selections are UTF-16 offsets within the replacement text, not the old document.
+/// Convert them to UTF-8 byte offsets before adding the insertion point.
+pub fn composition_selection(
+    text: &str,
+    selection: std::ops::Range<usize>,
+    insertion: usize,
+) -> std::ops::Range<usize> {
+    let byte_offset = |offset: usize| {
+        let mut units = 0;
+        let mut bytes = 0;
+        for character in text.chars() {
+            if units >= offset {
+                break;
+            }
+            units += character.len_utf16();
+            bytes += character.len_utf8();
+        }
+        bytes
+    };
+    let start = byte_offset(selection.start);
+    let end = byte_offset(selection.end);
+    insertion + start.min(end)..insertion + start.max(end)
+}
