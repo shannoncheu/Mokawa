@@ -9,14 +9,14 @@ Mokawa 是使用 Rust + GPUI 开发的 Windows 10/11 x64 原生 PikPak 客户端
 
 ## 当前实现
 
-- GPUI 原生深色三栏窗口；可编辑文本输入（含 IME）、目录搜索、名称排序、面包屑、多选、详情、加载和错误状态。
+- GPUI 原生深色窗口，独立账号、文件、任务中心和设置页；可编辑输入（含 IME）、目录搜索、名称排序、面包屑、多选、详情、加载和错误状态。
 - PikPak HTTP 层：登录挑战、密码登录、刷新、分页列表、详情、新建目录、重命名、确认后批量移入回收站。调用真实端点，但目前仅有 Mock 验证。
-- Windows Credential Manager 会话保存/恢复/移除，认证辅助程序 `mokawa-auth.exe`。
+- Windows Credential Manager 会话保存/恢复/移除；账号页说明连接状态，`mokawa-auth.exe --logout` 可移除本地会话。
 - Tokio 后台任务、过期请求隔离、退出取消、超时和敏感错误脱敏。
-- 下载基础函数：取消、进度、独占临时文件、禁止覆盖；队列持久化和中断标记。尚未接入 UI；不支持暂停/续传。
+- 下载任务中心：选择本地目录、两任务并发、进度、平均速度、取消、禁止覆盖、任务记录持久化和重启中断标记。网络传输及真实下载尚未实测；不支持暂停/续传或自动重试。
 - Windows 构建和 NSIS 安装脚本、CI、API 调查和测试记录。
 
-尚未实现：完整图形登录、移动/复制、云端搜索、类型过滤、收藏、右键菜单、拖放、下载任务 UI、上传、离线任务、分享、回收站页面、媒体、托盘、多账号和其他 P2 功能。导航中 `planned` 项不可点击。
+尚未实现：官方授权登录接入、移动/复制、云端搜索、类型过滤、收藏、右键菜单、拖放、上传、离线任务、分享、回收站页面、媒体、托盘、多账号和其他 P2 功能。未实现功能显示明确说明，不展示模拟数据。
 
 ## Windows 构建
 
@@ -29,15 +29,17 @@ cargo build --locked --release --features desktop --bins
 .\target\release\mokawa.exe
 ```
 
-GPUI 固定 crates.io `=0.2.2`，依赖锁定于 `Cargo.lock`；检查的是该发行包附带的实际源码，而非使用最新 main 的 API。详见 [GPUI 调查](docs/GPUI.md)。本仓库不发布 Linux/macOS 应用；云端 Linux 仅用于核心测试和 UI 源码类型检查。
+GPUI 固定 crates.io `=0.2.2`，依赖锁定于 `Cargo.lock`；检查的是该发行包附带的实际源码，而非使用最新 main 的 API。详见 [GPUI 调查](docs/GPUI.md)。本仓库不发布 Linux/macOS 应用；云端 Linux 仅用于核心测试；GPUI 依赖及 UI 源码只在 Windows 目标编译。Linux 的 `--all-features` 检查不验证 Windows UI。
 
 ## 认证前置条件
 
-目前没有确认可供 Mokawa 使用的官方第三方客户端注册。**这会阻止普通用户完成登录，是正式交付阻塞项。** 不应从参考客户端复制 client secret 或验证码签名来绕过这个问题。
+PikPak 官方现已公开 Connected Apps，并在 [官方 CLI 文档](https://github.com/pikcloud/skills/blob/main/skills/pikpak-cli/SKILL.md) 说明浏览器 OAuth 和设备授权，且注明密码登录不再支持。此前参考客户端的密码 API 仅保留作协议/Mock 研究，`mokawa-auth.exe` 默认明确报授权接入未完成，不再索取密码。
 
-只有在获得 PikPak 许可和属于 Mokawa 的客户端身份后，才能在本机设置 `MOKAWA_PIKPAK_CLIENT_ID` 和 `MOKAWA_PIKPAK_CLIENT_SECRET`，运行 `mokawa-auth.exe`。程序通过终端隐藏输入账号、密码和获授权的稳定 device ID，直接连接 PikPak，再将会话写入 Windows Credential Manager。不要将凭据作为命令参数、提交到 Git 或粘贴到 issue。验证码要求会明确中止登录；当前未完成图形验证回调。此流程不是已验证可用的官方授权实现。
+**Mokawa 的桌面客户端注册、OAuth 端点/权限/回调契约、Token 对文件 API 的适用范围尚未确认，因此当前版本不能为新用户完成登录。** 不应通过复制官方 CLI 的私有 client ID/secret、读取它的凭据文件或让用户导出会话来绕过。
 
-打开 Mokawa 后按 F5 读取会话并加载文件。搜索仅过滤已加载的当前目录。双击文件夹进入，Ctrl 点击多选。名称输入框用于新建目录和重命名。删除需要点击确认。退出账号通过 UI 或 `mokawa-auth.exe --logout` 移除本地会话；未验证服务端撤销会话接口。
+账号页可以打开官方 Connected Apps 说明，并尝试读取本应用系统凭据库已有会话。没有真实会话时会报错，不显示伪造文件。F5 刷新文件；搜索仅过滤已加载的当前目录。双击文件夹进入，Ctrl 点击多选。名称输入用于新建目录和重命名。删除需要确认。选择单个文件后点击 Download，使用原生目录选择器创建下载任务。断电/强制终止可能留下 `.mokawa.part`，当前不会静默删除它或覆盖文件；重新下载前应人工核对和清理对应临时文件。
+
+设置页可保存行密度与详情面板偏好；窗口较窄时隐藏详情栏。退出账号通过 UI 或 `mokawa-auth.exe --logout` 移除本地会话；尚未实现服务端撤销授权。真实文件操作仍全部待合法账号验收。
 
 ## 测试与安装
 

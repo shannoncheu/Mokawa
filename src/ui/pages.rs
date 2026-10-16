@@ -138,7 +138,7 @@ impl Mokawa {
                     let id=record.id.clone();
                     let phase=match record.phase{TransferPhase::Queued=>"Queued",TransferPhase::Running=>"Downloading",TransferPhase::Interrupted=>"Interrupted · start a new download",TransferPhase::Completed=>"Completed",TransferPhase::Cancelled=>"Cancelled",TransferPhase::Failed=>"Failed"};
                     let mut row=div().p_4().rounded_lg().bg(rgb(0x202331)).flex().flex_col().gap_2().child(record.file_name.clone()).child(format!("{phase} · {} bytes received",record.completed));
-                    if let Some(total)=record.total {if total>0 {row=row.child(div().h(px(4.)).w_full().bg(rgb(0x30374f)).child(div().h_full().w(gpui::relative((record.completed as f32/total as f32).clamp(0.,1.))).bg(rgb(0x949ce5))));}}
+                    if let Some(total)=record.total && total>0 {row=row.child(div().h(px(4.)).w_full().bg(rgb(0x30374f)).child(div().h_full().w(gpui::relative((record.completed as f32/total as f32).clamp(0.,1.))).bg(rgb(0x949ce5))));}
                     if let Some(speed)=snapshot.speeds.get(&id){row=row.child(format!("{speed} bytes/s average"));}
                     if let Some(error)=snapshot.errors.get(&id){row=row.child(error.clone());}
                     if matches!(record.phase,TransferPhase::Queued|TransferPhase::Running){row=row.child(Self::button("Cancel download").id(SharedString::from(format!("cancel-{id}"))).on_click(cx.listener(move|this,_,_,cx|{this.transfers.cancel(&id);cx.notify();})));}

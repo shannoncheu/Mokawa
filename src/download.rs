@@ -81,7 +81,7 @@ pub async fn load_queue(path: &Path) -> Result<Vec<TransferRecord>> {
     let mut records: Vec<TransferRecord> =
         serde_json::from_slice(&tokio::fs::read(path).await?).map_err(|_| Error::Protocol)?;
     for record in &mut records {
-        if record.phase == TransferPhase::Running {
+        if matches!(record.phase, TransferPhase::Running | TransferPhase::Queued) {
             record.phase = TransferPhase::Interrupted;
         }
     }

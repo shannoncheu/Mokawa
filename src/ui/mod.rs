@@ -56,6 +56,8 @@ impl Mokawa {
         if self.busy {
             return;
         }
+        self.pending_delete = None;
+        let is_listing = matches!(operation, Operation::List);
         let generation = self.browser.begin_navigation();
         let parent = self
             .browser
@@ -104,7 +106,9 @@ impl Mokawa {
                         this.status = format!("{count} items · PikPak");
                     }
                     Err(error) => {
-                        this.browser.files.clear();
+                        if is_listing || matches!(error, Error::Unauthorized | Error::Credentials) {
+                            this.browser.files.clear();
+                        }
                         this.status = error.to_string();
                     }
                 }
@@ -330,10 +334,10 @@ impl Render for Mokawa {
                     ))
                     .child(
                         Self::button("Confirm trash").on_click(cx.listener(|this, _, _, cx| {
-                            if !this.busy {
-                                if let Some(ids) = this.pending_delete.take() {
-                                    this.request(Operation::Trash(ids), cx);
-                                }
+                            if !this.busy
+                                && let Some(ids) = this.pending_delete.take()
+                            {
+                                this.request(Operation::Trash(ids), cx);
                             }
                         })),
                     )
@@ -403,7 +407,13 @@ pub fn run() {
             KeyBinding::new("alt-f4", Quit, None),
         ]);
         cx.on_action(|_: &Quit, cx| cx.quit());
-        let bounds = Bounds::centered(None, size(px(1200.), px(780.)), cx);
+        let small = std::env::args().any(|arg| arg == "--smoke-small");
+        let dimensions = if small {
+            size(px(760.), px(560.))
+        } else {
+            size(px(1200.), px(780.))
+        };
+        let bounds = Bounds::centered(None, dimensions, cx);
         let result = cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
@@ -422,7 +432,15 @@ pub fn run() {
                     let subscription = cx.observe(&search, |_, _, cx| cx.notify());
                     let mut view = Mokawa {
                         browser: BrowserState::default(),
-                        page: Page::Login,
+                        page: match std::env::args()
+                            .find_map(|arg| arg.strip_prefix("--smoke-page=").map(str::to_owned))
+                            .as_deref()
+                        {
+                            Some("files") => Page::Files,
+                            Some("tasks") => Page::Tasks,
+                            Some("settings") => Page::Settings,
+                            _ => Page::Login,
+                        },
                         transfers: Mokawa::new_transfers(),
                         hide_details: false,
                         ready: false,
@@ -442,7 +460,7 @@ pub fn run() {
                     view.start_background(cx);
                     let center = view.transfers.clone();
                     let runtime = view.runtime.clone();
-                    cx.on_app_quit(move |_| {
+                    cx.on_app_quit(move |_, _| {
                         center.cancel_all();
                         let center = center.clone();
                         let job = runtime.spawn(async move {
@@ -474,7 +492,7 @@ pub fn run() {
         if std::env::args().any(|arg| arg == "--smoke-test") {
             let timer = cx
                 .background_executor()
-                .timer(std::time::Duration::from_secs(2));
+                .timer(std::time::Duration::from_secs(5));
             cx.spawn(async move |cx| {
                 timer.await;
                 let _ = cx.update(|cx| cx.quit());

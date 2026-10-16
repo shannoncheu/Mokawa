@@ -9,9 +9,11 @@ UI（GPUI entities / input）→ 业务（auth/files/state/download）→ API（
 - `src/files.rs`：输入校验、分页、新建/重命名、确认后的批量删除。
 - `src/credentials.rs`：Windows Credential Manager；非 Windows 明确失败，不写明文兜底。
 - `src/state.rs`：列表过滤和排序、选择、路径、异步请求 generation 隔离。
-- `src/download.rs`：单次下载/取消/进度/冲突与队列保存基础，未接 UI、未支持 Range。
+- `src/download.rs`：单次下载/取消/进度/冲突与队列保存基础，未支持 Range。
+- `src/transfers.rs`：两任务并发、进度快照、取消、串行持久化，已接任务中心。
+- `src/ui/pages.rs`：账号、任务中心、设置页，设置偏好异步保存。
 - `src/ui`：原生布局、输入、交互。Tokio 运行网络工作，GPUI 弱实体异步更新。
-- `src/bin/auth.rs`：Windows 终端隐藏输入认证助手，尚未替代完整图形登录。
+- `src/bin/auth.rs`：本地退出辅助入口；旧密码登录已停用，等待官方 OAuth 接入。
 
 没有实现的 upload/offline/shares/media 不创建空壳模块伪装功能完整。计划在端点与生命周期确认后独立实现。
 

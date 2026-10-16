@@ -51,11 +51,19 @@ jobs:
           $uninstaller = Start-Process "$root\Uninstall.exe" -ArgumentList '/S' -Wait -PassThru
           if ($uninstaller.ExitCode -ne 0) { throw "Uninstall failed" }
           if (Test-Path "$root\mokawa.exe") { throw "Uninstall left executable" }
+      - name: Try native window smoke scenarios
+        continue-on-error: true
+        shell: pwsh
+        run: ./scripts/windows-smoke.ps1 -Executable "$PWD/target/release/mokawa.exe"
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: Mokawa-windows-x64-unsigned
+          if-no-files-found: warn
           path: |
             dist/Mokawa-0.1.0-x64-setup.exe
             dist/dependency-licenses.json
+            dist/smoke-results.json
+            dist/*.png
             target/release/mokawa.exe
             target/release/mokawa-auth.exe

@@ -19,3 +19,9 @@
 ## 维护与升级
 
 上游持续维护，但 GPUI 的公共 API 会变；不得直接浮动跟随 main。升级步骤：另开分支、下载目标发行包、比对窗口/输入/异步 API 和 Windows 后端、更新精确版本及锁文件、运行核心和 Windows 构建，再做 GPU/IME/DPI/材质人工验收。主依赖 GPUI 为 Apache-2.0；完整传递依赖清单从锁文件在 CI 生成。
+
+## 本轮构建问题定位
+
+`cargo tree --features desktop -i xattr` 定位到 GPUI → gpui_http_client → zed-async-tar 0.5.0-zed → xattr 0.2.3。zed-async-tar 在 cfg(unix) 中启用 xattr，其 ENOATTR 引用与 libc 0.2.190 的 Linux 定义不兼容。Windows x86_64-pc-windows-msvc 依赖树没有 xattr。
+
+修复是将 GPUI 与 unicode-segmentation 移入 target.cfg(windows).dependencies，并对 UI 模块进行 cfg(windows) 条件编译。保留精确 GPUI 版本和 libc 0.2.190，未 patch 上游或降级整个树。此前尝试 libc 0.2.183 遇到 nix 0.31.3 的最低版本约束，未生效；该尝试未写入锁文件。Linux all-features 现在只检查共享核心与非 Windows 入口，不代表 Windows UI 类型检查。

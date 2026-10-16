@@ -97,11 +97,12 @@ impl TransferCenter {
             let transfer=download::download(&url,&directory,&name,cancel.clone(),tx);
             tokio::pin!(transfer);
             let started=Instant::now();
+            let mut progress_open=true;
             loop {
                 tokio::select!{
                     result=&mut transfer=>{if let Some(record)=self.0.state.lock().unwrap().records.iter_mut().find(|r|r.id==id){record.completed = *rx.borrow();}break result;},
-                    changed=rx.changed()=>{
-                        if changed.is_err(){continue;}
+                    changed=rx.changed(), if progress_open=>{
+                        if changed.is_err(){progress_open=false;continue;}
                         let completed=*rx.borrow_and_update();
                         {let mut state=self.0.state.lock().unwrap();
                         if let Some(record)=state.records.iter_mut().find(|r|r.id==id){record.completed=completed;}

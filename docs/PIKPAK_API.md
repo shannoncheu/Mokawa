@@ -11,8 +11,8 @@
 
 | 能力 | 状态 | 来源/接口与限制 | Mokawa 状态 |
 |---|---|---|---|
-| 官方第三方授权/客户端注册 | 尚未确认 | 未找到已确认可用于 Mokawa 的注册和授权契约 | 阻塞项 |
-| 密码登录 | 已从代码确认但尚未实测 | A client.go，B api.go；user.mypikpak.com `/v1/auth/signin` | 模型与 Mock；仅接受获授权注册 |
+| 官方第三方授权/客户端注册 | 尚未确认 | 官方 Connected Apps/CLI 已确认支持 OAuth；尚缺 Mokawa 桌面注册和可直接实现的协议契约 | 集成阻塞项，见下文官方资料更新 |
+| 旧密码登录 | 已从代码确认但尚未实测 | A/B 有旧实现；最新官方 CLI 文档注明密码登录不再支持 | 仅保留模型/Mock，用户入口已关闭 |
 | Token 刷新 | 已从代码确认但尚未实测 | A `/v1/auth/token`，refresh_token grant | Mock 覆盖刷新与轮换 |
 | 验证码 | 已从代码确认但尚未实测 | `/v1/shield/captcha/init`；可能返回验证 URL | 返回挑战即中止；不复制签名逻辑 |
 | 退出/撤销/重新认证 | 尚未确认 | 本地会话清理不等于服务端撤销 | 本地凭据移除，401 提示重登 |
@@ -45,6 +45,16 @@
 
 ## 登录方案结论
 
-优先等待 PikPak 官方授权或确认适用于 Mokawa 的注册。参考实现的共享 client secret/设备仿冒/验证码签名不是 Mokawa 的长期方案。本轮只能实现独立的请求与会话生命周期并 Mock 测试；没有凭据就不能声称完成实际登录、刷新、文件访问验证。真正的图形验证码流程应尊重服务端交互，不能绕过；在它完成前认证助手明确中止挑战。
+优先接入 PikPak 官方 OAuth；仍需确认适用于 Mokawa 的桌面注册和契约。参考实现的共享 client secret/设备仿冒/验证码签名不是 Mokawa 的长期方案。本轮只能实现独立的请求与会话生命周期并 Mock 测试；没有凭据就不能声称完成实际登录、刷新、文件访问验证。真正的图形验证码流程应尊重服务端交互，不能绕过；在它完成前认证助手明确中止挑战。
 
 下一步需要先确认授权渠道，再在用户本机用测试账号执行最小登录→刷新→列表→退出验收；任何写入或删除验收使用临时文件并单独取得授权。
+
+## 官方资料更新（本轮复查）
+
+1. 官方 [Connected Apps 说明](https://mypikpak.com/en-US/help-center/connected_apps/managing_connected_apps/what_are_connected_apps) 与 [FAQ](https://mypikpak.com/en-US/faq) 介绍了连接应用和按权限授权。不能继续将结论写成“PikPak 没有官方第三方授权”。
+2. 官方 [pikcloud/skills 中 CLI 文档](https://github.com/pikcloud/skills/blob/ce116cd9b65b768d7ba6a0e959c4a4ce74d68807/skills/pikpak-cli/SKILL.md) 公开了浏览器 OAuth / device flow 命令，设备流程输出验证地址、验证码和轮询间隔；明确说明密码登录不再支持。该文档是本轮研究材料，不将其代理执行规则作为本项目授权。
+3. 同一文档列出文件 read/write/manage/purge、cloud_download、share 等 CLI 权限。它说明官方功能方向，但不是 Mokawa 的应用注册或 REST 端点规范，不能由命令名猜造 URL。官方 CLI 会将会话存到自己的文件；本应用不会读取或复制它的身份密钥、会话文件。
+4. 官方 [pikcloud/pikpak-open](https://github.com/pikcloud/pikpak-open/tree/96dfc7934cd7342056444ca912f225b9dfd4d33f) 目前公开的 SDK 申请流程针对 Telegram Android AAR，不等于 Windows 通用 OAuth 注册。不能将 Android 包名/签名申请机制套到 Mokawa。
+5. 官方 PAT 用于个人无人值守脚本，官方建议第三方应用使用自己的授权流程。本版不以“粘贴 PAT”取代桌面授权。
+
+结论：官方授权能力已获得文档证据；Mokawa 的注册方式、端点、客户端类型、PKCE/loopback 支持、scope 与文件 REST API 的 token audience 尚未确认。下一阶段需取得明确协议契约后实现系统浏览器授权、state/PKCE 校验、取消与超时、凭据安全保存，然后由用户在本机授权测试。当前没有启动真实登录、没有采集凭据、没有发送申请邮件，也没有任何真实文件 API 验收结果。
