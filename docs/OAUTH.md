@@ -40,3 +40,5 @@
 优先系统浏览器 + 授权码 + S256；state 使用安全随机数，监听器仅绑定本机 loopback，校验准确回调路径和 state，设置短期超时、一次性消费和取消。Token 只存 Windows Credential Manager，不导出用户密码、PAT 或官方 CLI 会话。不得把 CLI 或 Android 客户端的身份参数当作 Mokawa 身份。
 
 应先取得适用于 Mokawa 的注册契约，准备可审阅的客户端元数据，再由用户决定是否向 PikPak 注册或批准账号连接。真实授权、创建测试文件与删除验收均未执行。目前账号页明确显示授权集成尚未完成；旧密码调用仅作为历史 Mock 研究保留。
+
+来源边界：user.mypikpak.com 的 OIDC 发现来自 PikPak 已知认证域名；pikpak.ai 的 MCP 地址最初来自外部公开资料，本轮未在官方公开页面找到可核对该地址的直接链接。因此 MCP 响应仅作为候选资源的只读观察，不把它的域名或 Token audience 当作已获官方确认的生产契约。Mokawa 没有向该候选地址发送凭据。

@@ -5,7 +5,7 @@
 Mokawa 是使用 Rust + GPUI 开发的 Windows 10/11 x64 原生 PikPak 客户端。
 应用标识：`app.mokawa.desktop`。不包含 WebView、Electron、Tauri 或多网盘 Provider。
 
-> 当前为开发基础版本，尚未达到完整客户端交付标准。真实登录、文件访问、Windows 视觉效果和安装包需要验收。没有内置任何其他客户端的私有密钥，也不展示模拟网盘数据。
+> 当前为开发基础版本，尚未达到完整客户端交付标准。Windows Runner 的编译、安装/卸载和窗口启动已验证；真实登录、文件访问、Windows 10/11 本机 DPI 与视觉验收仍待完成。没有内置任何其他客户端的私有密钥，也不展示模拟网盘数据。
 
 ## 当前实现
 
@@ -46,7 +46,7 @@ PikPak 官方现已公开 Connected Apps，并在 [官方 CLI 文档](https://gi
 ```powershell
 cargo fmt --check
 cargo test --locked --all-targets
-cargo clippy --locked --all-targets -- -D warnings
+cargo clippy --locked --features desktop --all-targets -- -D warnings
 makensis installer\mokawa.nsi
 ```
 
@@ -57,3 +57,7 @@ makensis installer\mokawa.nsi
 Mokawa 与 PikPak 无官方关联。非官方接口可能变更、限流或触发账号风控；没有真实账号验证的功能不能视为可用。密码不持久化；会话仅使用系统凭据库，保存失败会报错而不会降级写明文。日志不记录请求体、响应体、Token、验证码或带签名的下载 URL。不要启用 HTTP wire 调试日志或导出明文凭据。
 
 [API 能力矩阵](docs/PIKPAK_API.md) · [架构及实施计划](docs/ARCHITECTURE.md) · [安全说明](SECURITY.md) · [依赖许可证](THIRD_PARTY.md) · [变更记录](CHANGELOG.md)
+
+## 已验证的开发版产物
+
+[Windows CI 与安装包](https://github.com/shannoncheu/Mokawa/actions/runs/38981753842) 对应代码 `ce9a945`：15 项核心/Mock + 1 项 Windows 系统凭据库测试、release、安装/卸载和五个窗口场景全部通过。安装包未签名；账号授权仍未接入，不能用于新账号登录。

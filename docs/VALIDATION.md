@@ -47,4 +47,21 @@
 
 ## 截图复查与最终复验
 
-第一个完整流水线成功后，已下载安装包、PE 导入清单和五张真实窗口截图。DLL 导入仅为 Windows 系统库，没有动态 VCRUNTIME/MSVCP。窗口进程检查通过不等于画面无问题：大窗口截图实际被屏幕裁切，窄窗口完整。已根据 GPUI primary_display 的逻辑边界限制初始尺寸、同步降低最小尺寸，并在烟雾脚本用 Windows WorkingArea 检查可用桌面边界，等待最终 Windows 复验。
+第一个完整流水线成功后，已下载安装包、PE 导入清单和五张真实窗口截图。DLL 导入仅为 Windows 系统库，没有动态 VCRUNTIME/MSVCP。窗口进程检查通过不等于画面无问题：大窗口截图实际被屏幕裁切，窄窗口完整。已根据 GPUI primary_display 的逻辑边界限制初始尺寸、同步降低最小尺寸，并在烟雾脚本用 Windows WorkingArea 检查可用桌面边界，最终 Windows 复验已通过，见下表。
+
+| 最终 Run | 代码 | 实际结果 |
+|---|---|---|
+| [38981566794](https://github.com/shannoncheu/Mokawa/actions/runs/38981566794) | 3e9f9a6 | 15 核心/Mock + 1 系统凭据库测试、原生检查、Clippy、release、安装包、安装/卸载和窗口启动通过；尚未包含默认尺寸修正。 |
+| [38981753842](https://github.com/shannoncheu/Mokawa/actions/runs/38981753842) | ce9a945 | **全部通过**，包含默认尺寸修正及 WorkingArea 边界检查。 |
+
+已下载并人工查看最终账号/文件/任务/设置/窄窗口五张真实截图，默认窗口 976×679、窄窗口 776×599 均完整显示；不再裁切标题和侧栏。每场景退出码 0。Windows 原生测试使用隔离的合成凭据验证 Credential Manager 保存、读取、删除；这不表示真实 PikPak Token 已通过验收。
+
+最终安装包：[Mokawa-0.1.0-x64-setup.exe（GitHub 产物）](https://github.com/shannoncheu/Mokawa/actions/runs/38981753842/artifacts/12080334800)。代码版本 ce9a945，unsigned，SHA-256：
+
+```
+ece26e34e30182325c06e9071683aa4af012b7326ec2062c40111592cfd0b189
+```
+
+本地已保存到 dist/，包括 mokawa.exe、mokawa-auth.exe、安装包、smoke-results.json、imports.txt、依赖清单和五张截图；dist 不提交 Git。此后的交付文档提交没有修改已验证代码，因此不重复执行 Windows 构建。
+
+仍未通过的验收：真实账号 OAuth/Token 刷新和所有云端文件读写/下载；Windows 10/11 本机、多显示器和 100–200% DPI；真正的系统模糊材质；完整输入法/键鼠交互与可访问性；干净客户端系统安装；完整依赖法律审计与签名。高级 P1/P2 状态见能力矩阵。当前是可运行、可安装的开发验证版，不是已完成 P0 的完整网盘客户端。

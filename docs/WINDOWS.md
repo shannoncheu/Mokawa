@@ -26,3 +26,9 @@
 无窗口：检查 Windows 图形驱动和 GPUI GPU 支持，在交互式桌面运行 smoke test；云端 runner 构建成功并不保证远程无 GPU 环境能开窗。构建失败：核对 MSVC x64、SDK、CMake 和工具链。会话错误：先确认已使用 Mokawa 获授权的身份注册；不要复制其他客户端密钥。403/验证码：停止自动尝试，按 PikPak 官方要求完成验证。429：等待后手动重试。下载恢复未启用；队列中 Interrupted 状态不表示具备断点能力。
 
 自动窗口检查使用 scripts/windows-smoke.ps1，分别启动账号、文件、任务、设置与窄窗口场景，检查本机窗口标题、退出码并尝试截图。它作为允许失败的独立诊断步骤运行，因为托管 Runner 可能没有可用 GPU 桌面；必须单独查看该步骤结果及 smoke-results.json，不能把整条工作流绿色等同于视觉验收通过。截图也不能代替 IME、拖放、多显示器、DPI 和材质人工验收。
+
+## 已实际通过的 Runner 验证
+
+最新代码 ce9a945 的 [Windows 运行](https://github.com/shannoncheu/Mokawa/actions/runs/38981753842) 已通过 16 项测试、原生编译、严格 lint、release、PE 品牌/静态 CRT 检查、NSIS、安装/卸载和五个窗口场景。截图已人工复查。Runner 是 Windows Server 2022；不能据此将上方 Windows 10/11 本机与 DPI 清单勾选为通过。
+
+GPUI 0.2.2 的 release 着色器编译需要 Windows SDK 的 fxc.exe。若不在 PATH 且 SDK 不位于上游默认 10.0.26100.0 路径，应在构建前将 GPUI_FXC_PATH 设置为本机 SDK x64/fxc.exe 的完整路径。
