@@ -2,6 +2,7 @@ param([Parameter(Mandatory=$true)][string]$Executable, [string]$OutputDirectory 
 $ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -30,6 +31,10 @@ foreach ($scenario in @('account', 'files', 'tasks', 'settings', 'files-small'))
         Start-Sleep -Milliseconds 400
         $rect = New-Object MokawaWindow+Rect
         if (![MokawaWindow]::GetWindowRect($window, [ref]$rect)) { throw 'Could not measure native window.' }
+        $work = [System.Windows.Forms.Screen]::FromHandle($window).WorkingArea
+        if ($rect.Left -lt ($work.Left - 8) -or $rect.Top -lt ($work.Top - 8) -or $rect.Right -gt ($work.Right + 8) -or $rect.Bottom -gt ($work.Bottom + 8)) {
+            throw 'Native window extends outside the usable desktop.'
+        }
         $width = $rect.Right - $rect.Left
         $height = $rect.Bottom - $rect.Top
         $bitmap = New-Object System.Drawing.Bitmap($width, $height)

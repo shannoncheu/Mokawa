@@ -410,11 +410,20 @@ pub fn run() {
         ]);
         cx.on_action(|_: &Quit, cx| cx.quit());
         let small = std::env::args().any(|arg| arg == "--smoke-small");
-        let dimensions = if small {
+        let mut dimensions = if small {
             size(px(760.), px(560.))
         } else {
             size(px(1200.), px(780.))
         };
+        if let Some(display) = cx.primary_display() {
+            let available = display.bounds().size;
+            // Leave room for the native frame and taskbar on smaller desktops.
+            dimensions = dimensions.min(&size(
+                available.width - px(64.),
+                available.height - px(128.),
+            ));
+        }
+        let minimum = size(px(760.), px(560.)).min(&dimensions);
         let bounds = Bounds::centered(None, dimensions, cx);
         let result = cx.open_window(
             WindowOptions {
@@ -423,7 +432,7 @@ pub fn run() {
                     ..Default::default()
                 }),
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(760.), px(560.))),
+                window_min_size: Some(minimum),
                 app_id: Some(mokawa::settings::APP_ID.into()),
                 window_background: gpui::WindowBackgroundAppearance::Opaque,
                 ..Default::default()

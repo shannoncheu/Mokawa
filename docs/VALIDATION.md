@@ -20,7 +20,7 @@
 | [38979353343](https://github.com/shannoncheu/Mokawa/actions/runs/38979353343) | 4f37253 | 失败：UI 鼠标事件类型推断、输入组件 size 导入；已修复。 |
 | [38979824894](https://github.com/shannoncheu/Mokawa/actions/runs/38979824894) | 45f6858 | Windows 核心测试通过；native check 失败：Context::on_app_quit 需要两个参数；已按发行源码修复。 |
 | [38980197660](https://github.com/shannoncheu/Mokawa/actions/runs/38980197660) | d002fa8 | Windows 核心 13 测试通过，UI check 通过；严格 Clippy 失败：两个赋值空格诊断；已修复。安装包未执行。 |
-| [38980394899](https://github.com/shannoncheu/Mokawa/actions/runs/38980394899) | c35603e | 执行中，结果待下文更新。 |
+| [38980394899](https://github.com/shannoncheu/Mokawa/actions/runs/38980394899) | c35603e | 13 核心测试、UI check、严格 Clippy、release、PE 元数据/导入、安装包、安装/卸载、五场景窗口启动均通过。但人工看截图发现大窗口超出 Runner 屏幕，已继续修复默认尺寸并加强边界断言。 |
 
 附加修改：.cargo/config.toml 为 MSVC 静态 CRT；build.rs/resources/mokawa.rc 添加 Mokawa 产品/版本元数据。CI 检查 PE 导入并拒绝意外动态 VCRUNTIME/MSVCP 依赖；不能仅因安装脚本生成就宣布兼容干净 Windows。
 
@@ -44,3 +44,7 @@
 - 真实登录、刷新、文件列表、创建目录、重命名、删除、下载：**全部尚未执行真实验收**。
 - 上传、分享、离线下载、回收站完整页面与媒体：**未实现**。官方 CLI 资料确认了部分服务能力，但没有由此猜造 REST 端点。
 - 下一步：先完成 Windows 产物与本机运行验收；取得官方适用协议后实现浏览器授权并安排用户本机测试，再按临时测试目录逐项验证 P0。此后继续 P1/P2。
+
+## 截图复查与最终复验
+
+第一个完整流水线成功后，已下载安装包、PE 导入清单和五张真实窗口截图。DLL 导入仅为 Windows 系统库，没有动态 VCRUNTIME/MSVCP。窗口进程检查通过不等于画面无问题：大窗口截图实际被屏幕裁切，窄窗口完整。已根据 GPUI primary_display 的逻辑边界限制初始尺寸、同步降低最小尺寸，并在烟雾脚本用 Windows WorkingArea 检查可用桌面边界，等待最终 Windows 复验。
