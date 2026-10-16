@@ -20,11 +20,11 @@ futures-util = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 secrecy = { version = "0.10", features = ["serde"] }
-gpui = { version = "=0.2.2", optional = true, default-features = false, features = ["windows-manifest"] }
-unicode-segmentation = { version = "1", optional = true }
 rpassword = "7"
 
 [target.'cfg(windows)'.dependencies]
+gpui = { version = "=0.2.2", optional = true, default-features = false, features = ["windows-manifest"] }
+unicode-segmentation = { version = "1", optional = true }
 keyring = { version = "3", features = ["windows-native"] }
 
 [dev-dependencies]

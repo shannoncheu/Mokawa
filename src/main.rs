@@ -1,4 +1,5 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+#[cfg(windows)]
 mod ui;
 fn main() {
     mokawa::settings::init_logging();
@@ -6,5 +7,6 @@ fn main() {
         eprintln!("Mokawa ships only for Windows 10/11 x64.");
         return;
     }
+    #[cfg(windows)]
     ui::run();
 }

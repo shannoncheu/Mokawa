@@ -17,11 +17,11 @@ jobs:
       - name: Format
         run: cargo fmt --check
       - name: Core and mock tests
-        run: cargo test --locked --all-targets
+        run: cargo test --locked --features desktop --all-targets
       - name: Check native UI
         run: cargo check --locked --features desktop --all-targets
       - name: Lint
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --features desktop --all-targets -- -D warnings
       - name: Build Windows x64 executables
         run: cargo build --locked --release --features desktop --bins
       - name: Prepare dependency metadata
