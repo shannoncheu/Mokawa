@@ -194,3 +194,66 @@ async fn cyclic_pagination_is_rejected() {
         Err(Error::Protocol)
     ));
 }
+
+#[tokio::test]
+async fn queue_rejects_insecure_url_and_persists_failure_without_secrets() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("downloads.json");
+    let center = mokawa::transfers::TransferCenter::new(path.clone());
+    center.restore().await.unwrap();
+    let record = TransferRecord {
+        id: "test-download".into(),
+        file_id: "a".into(),
+        file_name: "safe.txt".into(),
+        completed: 0,
+        total: None,
+        phase: TransferPhase::Queued,
+    };
+    center
+        .run(
+            record,
+            "http://example.invalid/signed?secret=should-not-persist".into(),
+            directory.path().to_path_buf(),
+        )
+        .await;
+    let snapshot = center.snapshot();
+    assert_eq!(snapshot.records[0].phase, TransferPhase::Failed);
+    assert!(snapshot.errors["test-download"].contains("HTTPS"));
+    assert!(
+        !std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("should-not-persist")
+    );
+    assert!(!directory.path().join("safe.txt").exists());
+    assert!(!directory.path().join("safe.txt.mokawa.part").exists());
+}
+
+#[tokio::test]
+async fn preferences_round_trip_and_corruption_is_reported() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("prefs.json");
+    let defaults = mokawa::settings::Preferences::load(&path).await.unwrap();
+    assert!(!defaults.hide_details);
+    mokawa::settings::Preferences {
+        compact_rows: true,
+        hide_details: true,
+    }
+    .save(&path)
+    .await
+    .unwrap();
+    let saved = mokawa::settings::Preferences::load(&path).await.unwrap();
+    assert!(saved.compact_rows && saved.hide_details);
+    std::fs::write(&path, "broken").unwrap();
+    assert!(mokawa::settings::Preferences::load(&path).await.is_err());
+}
+
+#[test]
+fn sign_out_invalidates_pending_session_writes() {
+    let old = mokawa::credentials::generation();
+    mokawa::credentials::invalidate_pending_writes();
+    assert!(mokawa::credentials::generation() > old);
+    assert!(matches!(
+        mokawa::credentials::save_if_current(&session(), old),
+        Err(Error::Cancelled)
+    ));
+}

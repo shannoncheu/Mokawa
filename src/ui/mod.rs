@@ -1,9 +1,11 @@
 mod input;
+mod pages;
 use gpui::{
     App, Application, Bounds, Context, Entity, KeyBinding, SharedString, Subscription,
     TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, size,
 };
 use input::TextInput;
+use mokawa::transfers::TransferCenter;
 use mokawa::{
     api::Api,
     auth::Registration,
@@ -13,10 +15,16 @@ use mokawa::{
     models::File,
     state::BrowserState,
 };
+use pages::Page;
 use std::sync::Arc;
 actions!(mokawa, [Refresh, Quit]);
 struct Mokawa {
     browser: BrowserState,
+    page: Page,
+    transfers: TransferCenter,
+    hide_details: bool,
+    ready: bool,
+    saving_preferences: bool,
     search: Entity<TextInput>,
     name: Entity<TextInput>,
     _subscription: Subscription,
@@ -40,6 +48,7 @@ impl Drop for Mokawa {
         if let Some(task) = self.task.take() {
             task.abort();
         }
+        self.transfers.cancel_all();
     }
 }
 impl Mokawa {
@@ -56,12 +65,13 @@ impl Mokawa {
             .unwrap_or_default();
         self.busy = true;
         self.status = "Connecting to PikPak…".into();
+        let epoch = credentials::generation();
         let job = self.runtime.spawn(async move {
             let api = Api::new()?;
             let mut session = credentials::load()?;
             if session.expired() {
                 session = api.refresh(&Registration::from_env()?, &session).await?;
-                credentials::save(&session)?;
+                credentials::save_if_current(&session, epoch)?;
             }
             match operation {
                 Operation::List => {}
@@ -119,6 +129,9 @@ impl Mokawa {
 }
 impl Render for Mokawa {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.page != Page::Files {
+            return self.secondary_page(cx).into_any_element();
+        }
         let files = self
             .browser
             .visible(self.search.read(cx).content.as_ref(), self.descending);
@@ -142,16 +155,16 @@ impl Render for Mokawa {
                     })),
                 );
         for (index, (_, name)) in self.browser.path.iter().enumerate() {
-            crumbs = crumbs
-                .child("/")
-                .child(
-                    Self::button(name).on_click(cx.listener(move |this, _, _, cx| {
+            crumbs = crumbs.child("/").child(
+                Self::button(name)
+                    .id(SharedString::from(format!("crumb-{index}")))
+                    .on_click(cx.listener(move |this, _, _, cx| {
                         if !this.busy {
                             this.browser.path.truncate(index + 1);
                             this.request(Operation::List, cx);
                         }
                     })),
-                );
+            );
         }
         let mut content = div()
             .id("file-list")
@@ -203,11 +216,15 @@ impl Render for Mokawa {
                 })
                 .on_mouse_down(
                     gpui::MouseButton::Left,
-                    cx.listener(move |this, event, _, cx| {
+                    cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
                         if this.busy {
                             return;
                         }
                         if event.click_count == 2 && folder {
+                            this.search.update(cx, |input, cx| {
+                                input.reset();
+                                cx.notify();
+                            });
                             this.browser.path.push((id.clone(), name.clone()));
                             this.request(Operation::List, cx);
                         } else {
@@ -223,18 +240,7 @@ impl Render for Mokawa {
                 );
             content = content.child(row);
         }
-        let sidebar=div().w(px(190.)).flex_shrink_0().h_full().p_5().flex().flex_col().gap_2().bg(rgb(0x141621))
-            .child(div().text_2xl().text_color(rgb(0xe2e6ff)).mb_2().child("Mokawa"))
-            .child(div().text_xs().text_color(rgb(0x838ba4)).mb_6().child("YOUR PIKPAK, AT EASE"))
-            .child(Self::button("All files").on_click(cx.listener(|this,_,_,cx|{if !this.busy{this.browser.path.clear();this.request(Operation::List,cx);}})))
-            .children(["Recent · planned","Favorites · planned","Offline tasks · planned","Shares · planned","Trash · planned"].into_iter().map(|label|div().py_2().text_sm().text_color(rgb(0x6c758d)).child(label)))
-            .child(div().flex_1())
-            .child(Self::button("Account & settings").on_click(cx.listener(|this,_,_,cx|{this.status="Sign in with mokawa-auth.exe using a Mokawa-authorized client registration. No third-party credentials are bundled. See README.".into();cx.notify();})))
-            .child(Self::button("Sign out").on_click(cx.listener(|this,_,_,cx|{
-                if let Some(task)=this.task.take(){task.abort();}this.busy=false;this.browser.begin_navigation();this.browser.files.clear();this.browser.path.clear();
-                this.status=match credentials::delete(){Ok(())=>"Local session removed. Server-side revocation is not verified.".into(),Err(error)=>error.to_string()};cx.notify();
-            })))
-            .child(div().text_xs().mt_4().text_color(rgb(0x6c758d)).child("A calmer way to manage your files."));
+        let sidebar = self.navigation(cx);
         let toolbar = div()
             .flex()
             .flex_wrap()
@@ -263,6 +269,10 @@ impl Render for Mokawa {
                 })),
             );
         let operations = div()
+            .child(
+                Self::button("Download")
+                    .on_click(cx.listener(|this, _, _, cx| this.choose_download(cx))),
+            )
             .flex()
             .flex_wrap()
             .gap_2()
@@ -371,7 +381,11 @@ impl Render for Mokawa {
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.request(Operation::List, cx)))
             .child(sidebar)
             .child(center)
-            .child(detail)
+            .when(
+                !self.hide_details && _window.viewport_size().width >= px(1120.),
+                |root| root.child(detail),
+            )
+            .into_any_element()
     }
 }
 pub fn run() {
@@ -397,7 +411,7 @@ pub fn run() {
                     ..Default::default()
                 }),
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(1000.), px(600.))),
+                window_min_size: Some(size(px(760.), px(560.))),
                 window_background: gpui::WindowBackgroundAppearance::Opaque,
                 ..Default::default()
             },
@@ -406,20 +420,44 @@ pub fn run() {
                 let name = cx.new(|cx| TextInput::new("New name…", cx));
                 cx.new(|cx| {
                     let subscription = cx.observe(&search, |_, _, cx| cx.notify());
-                    Mokawa {
+                    let mut view = Mokawa {
                         browser: BrowserState::default(),
+                        page: Page::Login,
+                        transfers: Mokawa::new_transfers(),
+                        hide_details: false,
+                        ready: false,
+                        saving_preferences: false,
                         search,
                         name,
                         _subscription: subscription,
                         runtime: runtime.clone(),
-                        status: "Not connected · Sign in with mokawa-auth.exe, then refresh."
+                        status: "Not connected · Official authorization integration is pending."
                             .into(),
                         busy: false,
                         descending: false,
                         grid: false,
                         pending_delete: None,
                         task: None,
-                    }
+                    };
+                    view.start_background(cx);
+                    let center = view.transfers.clone();
+                    let runtime = view.runtime.clone();
+                    cx.on_app_quit(move |_| {
+                        center.cancel_all();
+                        let center = center.clone();
+                        let job = runtime.spawn(async move {
+                            let _ = tokio::time::timeout(
+                                std::time::Duration::from_secs(3),
+                                center.wait_idle(),
+                            )
+                            .await;
+                        });
+                        async move {
+                            let _ = job.await;
+                        }
+                    })
+                    .detach();
+                    view
                 })
             },
         );

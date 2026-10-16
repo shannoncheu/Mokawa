@@ -12,3 +12,29 @@ pub fn init_logging() {
         .with_max_level(tracing::Level::INFO)
         .try_init();
 }
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Preferences {
+    pub compact_rows: bool,
+    pub hide_details: bool,
+}
+impl Preferences {
+    pub async fn load(path: &std::path::Path) -> crate::error::Result<Self> {
+        match tokio::fs::read(path).await {
+            Ok(data) => serde_json::from_slice(&data).map_err(|_| crate::error::Error::Protocol),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(_) => Err(crate::error::Error::Io),
+        }
+    }
+    pub async fn save(&self, path: &std::path::Path) -> crate::error::Result<()> {
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let data = serde_json::to_vec_pretty(self).map_err(|_| crate::error::Error::Protocol)?;
+        let temporary = path.with_extension("pending");
+        tokio::fs::write(&temporary, data).await?;
+        tokio::fs::rename(&temporary, path).await?;
+        Ok(())
+    }
+}

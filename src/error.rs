@@ -26,6 +26,10 @@ pub enum Error {
         "A Mokawa-authorized PikPak client registration is required; no third-party client secret is bundled."
     )]
     ClientRegistrationRequired,
+    #[error(
+        "Mokawa desktop authorization is not integrated yet. PikPak now supports official browser/device authorization; do not use the legacy password flow."
+    )]
+    AuthorizationPending,
     #[error("Local file operation failed.")]
     Io,
 }

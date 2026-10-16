@@ -11,13 +11,16 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Install pinned Rust
         shell: pwsh
         run: rustup show
       - name: Format
         run: cargo fmt --check
       - name: Core and mock tests
-        run: cargo test --locked --features desktop --all-targets
+        run: cargo test --locked --all-targets
       - name: Check native UI
         run: cargo check --locked --features desktop --all-targets
       - name: Lint

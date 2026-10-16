@@ -1,4 +1,4 @@
-use mokawa::{api::Api, auth::Registration, credentials, error::Result};
+use mokawa::{credentials, error::Result};
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -15,16 +15,8 @@ async fn run() -> Result<()> {
         println!("Mokawa: local session removed.");
         return Ok(());
     }
-    let registration = Registration::from_env()?;
-    println!("Mokawa — PikPak sign in. Credentials go directly to PikPak.");
-    let username = rpassword::prompt_password("PikPak account (hidden): ")?;
-    let password = rpassword::prompt_password("Password (hidden): ")?;
-    let device_id =
-        rpassword::prompt_password("Stable device ID for this authorized registration: ")?;
-    let session = Api::new()?
-        .login(&registration, &username, &password.into(), &device_id)
-        .await?;
-    credentials::save(&session)?;
-    println!("Mokawa: session saved in Windows Credential Manager.");
-    Ok(())
+    // Official PikPak CLI documentation now states that password login is unsupported.
+    // Preserve the legacy protocol implementation for Mock research, but do not solicit
+    // user passwords before a documented Mokawa desktop OAuth contract is available.
+    Err(mokawa::error::Error::AuthorizationPending)
 }

@@ -7,3 +7,4 @@ pub mod files;
 pub mod models;
 pub mod settings;
 pub mod state;
+pub mod transfers;
