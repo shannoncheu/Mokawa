@@ -33,7 +33,7 @@
 - 设置页：行密度与详情栏偏好异步保存，不导出凭据。
 - 状态修复：异步结果有 generation 检查；退出账号使待保存的旧会话失效；窗口退出取消传输并有限等待清理；持久化写入串行化。
 - 本地命令：`cargo fmt --check`、`cargo test --locked --all-targets`、`cargo clippy --locked --all-targets -- -D warnings`。
-- 已实际通过：13 项测试，含原 10 项及设置往返/损坏、失败下载记录无签名 URL、退出会话旧写入拦截。此处没有调用真实 PikPak。之后针对 IME 中文/emoji 组合范围加入第 14 项回归并通过；最终 Windows CI 另有隔离的真实 Credential Manager 合成凭据往返测试，不访问应用账号凭据。
+- 已实际通过：13 项测试，含原 10 项及设置往返/损坏、失败下载记录无签名 URL、退出会话旧写入拦截。此处没有调用真实 PikPak。之后针对 IME 中文/emoji 组合范围加入第 14 项回归并通过；为退出账号早于下载线程注册的竞争再加入第 15 项回归并通过；最终 Windows CI 另有隔离的真实 Credential Manager 合成凭据往返测试，不访问应用账号凭据。
 - Windows 视觉验证：scripts/windows-smoke.ps1 配置五个真实窗口场景，结果必须单看 smoke-results.json；Runner 无 GPU 桌面会明确失败。这不替代本机 IME、DPI、多显示器、材质验收。
 
 ## 阶段四：官方认证与剩余能力

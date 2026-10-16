@@ -80,9 +80,18 @@ impl TransferCenter {
     }
     /// Call on the background runtime; `url` must come from PikPak file details, never user text.
     pub async fn run(&self, record: TransferRecord, url: String, directory: PathBuf) {
+        self.run_cancellable(record, url, directory, CancellationToken::new())
+            .await;
+    }
+    pub async fn run_cancellable(
+        &self,
+        record: TransferRecord,
+        url: String,
+        directory: PathBuf,
+        cancel: CancellationToken,
+    ) {
         let id = record.id.clone();
         let name = record.file_name.clone();
-        let cancel = CancellationToken::new();
         self.0
             .cancellations
             .lock()
@@ -91,6 +100,7 @@ impl TransferCenter {
         self.0.state.lock().unwrap().records.push(record);
         self.persist().await;
         let result=async {
+            if cancel.is_cancelled(){return Err(Error::Cancelled);}
             let _slot=tokio::select!{_ = cancel.cancelled()=>return Err(Error::Cancelled),slot=self.0.slots.acquire()=>slot.map_err(|_|Error::Cancelled)?};
             self.set_phase(&id,TransferPhase::Running);self.persist().await;
             let (tx,mut rx)=watch::channel(0);

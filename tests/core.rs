@@ -270,3 +270,36 @@ fn ime_selection_is_relative_to_replacement_with_non_ascii_prefix() {
     let clamped = composition_selection(replacement, 0..usize::MAX, insertion);
     assert_eq!(&updated[clamped], replacement);
 }
+
+#[tokio::test]
+async fn sign_out_cancels_download_before_worker_registration() {
+    let directory = tempfile::tempdir().unwrap();
+    let center = mokawa::transfers::TransferCenter::new(directory.path().join("queue.json"));
+    let scope = tokio_util::sync::CancellationToken::new();
+    scope.cancel();
+    let record = TransferRecord {
+        id: "cancelled-before-start".into(),
+        file_id: "a".into(),
+        file_name: "never-created.txt".into(),
+        completed: 0,
+        total: Some(42),
+        phase: TransferPhase::Queued,
+    };
+    center
+        .run_cancellable(
+            record,
+            "https://example.invalid/not-requested".into(),
+            directory.path().to_path_buf(),
+            scope.child_token(),
+        )
+        .await;
+    assert_eq!(center.snapshot().records[0].phase, TransferPhase::Cancelled);
+    assert!(!directory.path().join("never-created.txt").exists());
+    assert!(
+        !directory
+            .path()
+            .join("never-created.txt.mokawa.part")
+            .exists()
+    );
+    center.wait_idle().await;
+}

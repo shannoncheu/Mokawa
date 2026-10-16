@@ -69,6 +69,8 @@ impl Mokawa {
                     if let Some(task) = this.task.take() {
                         task.abort();
                     }
+                    this.download_scope.cancel();
+                    this.download_scope = tokio_util::sync::CancellationToken::new();
                     this.transfers.cancel_all();
                     this.busy = false;
                     this.browser.begin_navigation();
@@ -193,6 +195,7 @@ impl Mokawa {
             return;
         };
         let epoch = credentials::generation();
+        let download_scope = self.download_scope.child_token();
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -217,7 +220,7 @@ impl Mokawa {
                             session = api.refresh(&Registration::from_env()?, &session).await?;
                             credentials::save_if_current(&session, epoch)?;
                         }
-                        let details = api.file_details(&session, &file.id).await?;
+                        let details=tokio::select!{_ = download_scope.cancelled()=>return Err(Error::Cancelled),result=api.file_details(&session,&file.id)=>result?};
                         if credentials::generation() != epoch {
                             return Err(Error::Cancelled);
                         }
@@ -238,7 +241,7 @@ impl Mokawa {
                             phase: TransferPhase::Queued,
                         };
                         center
-                            .run(record, details.web_content_link, directory)
+                            .run_cancellable(record, details.web_content_link, directory,download_scope)
                             .await;
                         Ok(())
                     });
@@ -247,6 +250,7 @@ impl Mokawa {
                     cx.spawn(async move |this, cx| {
                         let result: Result<()> = job.await.unwrap_or(Err(Error::Cancelled));
                         let _ = this.update(cx, |this, cx| {
+                            if credentials::generation()!=epoch{return;}
                             this.status = match result {
                                 Ok(()) => "Download task finished. See its status above.".into(),
                                 Err(error) => error.to_string(),

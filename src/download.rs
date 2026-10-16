@@ -15,6 +15,9 @@ pub async fn download(
     cancel: CancellationToken,
     progress: tokio::sync::watch::Sender<u64>,
 ) -> Result<()> {
+    if cancel.is_cancelled() {
+        return Err(Error::Cancelled);
+    }
     validate_name(name)?;
     if name.ends_with('.') || name.ends_with(' ') || name.chars().any(|c| "<>:\"|?*".contains(c)) {
         return Err(Error::Invalid("Windows file name"));

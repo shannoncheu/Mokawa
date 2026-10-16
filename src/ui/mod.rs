@@ -22,6 +22,7 @@ struct Mokawa {
     browser: BrowserState,
     page: Page,
     transfers: TransferCenter,
+    download_scope: tokio_util::sync::CancellationToken,
     hide_details: bool,
     ready: bool,
     saving_preferences: bool,
@@ -48,6 +49,7 @@ impl Drop for Mokawa {
         if let Some(task) = self.task.take() {
             task.abort();
         }
+        self.download_scope.cancel();
         self.transfers.cancel_all();
     }
 }
@@ -443,6 +445,7 @@ pub fn run() {
                             _ => Page::Login,
                         },
                         transfers: Mokawa::new_transfers(),
+                        download_scope: tokio_util::sync::CancellationToken::new(),
                         hide_details: false,
                         ready: false,
                         saving_preferences: false,
@@ -461,7 +464,8 @@ pub fn run() {
                     view.start_background(cx);
                     let center = view.transfers.clone();
                     let runtime = view.runtime.clone();
-                    cx.on_app_quit(move |_, _| {
+                    cx.on_app_quit(move |view, _| {
+                        view.download_scope.cancel();
                         center.cancel_all();
                         let center = center.clone();
                         let job = runtime.spawn(async move {
