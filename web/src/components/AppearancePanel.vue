@@ -17,7 +17,7 @@ const sliders=[{key:'imageOpacity',label:'背景图片不透明度',min:0,max:10
       <div class="setting-row"><label for="blur">背景模糊</label><select id="blur" v-model.number="settings.blur"><option :value="0">无模糊</option><option :value="6">轻微</option><option :value="14">中度</option><option :value="24">强模糊</option></select></div>
       <div v-for="slider in sliders" :key="slider.key" class="slider-setting"><label :for="slider.key">{{slider.label}}<output>{{settings[slider.key]}}{{slider.unit}}</output></label><input :id="slider.key" v-model.number="settings[slider.key]" type="range" :min="slider.min" :max="slider.max"></div>
       <div class="setting-row"><label for="overlay">背景覆盖颜色</label><input id="overlay" v-model="settings.overlayColor" type="color"></div>
-      <p class="setting-note">图片、面板和覆盖层分别调整。文字和按钮保持清晰；面板不透明度至少 80%。模糊只作用于应用内背景，不是 Windows 系统毛玻璃。</p>
+      <p class="setting-note">图片、面板和覆盖层分别调整。文字和按钮保持清晰；面板不透明度至少 80%。模糊只作用于应用内背景，不是 Windows 系统毛玻璃。低性能设备可选择无模糊或移除背景。</p>
     </section>
     <section class="setting-section"><h2>动态效果</h2><label class="toggle-row"><span>减少动画与过渡<small>同时遵循 Windows 的减少动态效果偏好。</small></span><input v-model="settings.reducedMotion" type="checkbox"></label></section>
     <div class="settings-actions"><button @click="emit('reset')"><RotateCcw :size="15"/>恢复默认外观</button><button v-if="saveStatus==='保存失败'" @click="emit('retry')">重试保存</button></div>

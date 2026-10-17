@@ -8,7 +8,7 @@ const executable=process.env.MOKAWA_TEST_EXECUTABLE
 if(!executable)throw Error('Windows test executable missing')
 const results={nativeWebView2:true}
 async function launch(){
-  const child=spawn(executable,[],{env:{...process.env,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port=9222'}})
+  const child=spawn(executable,[],{stdio:'inherit',env:{...process.env,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port=9222'}})
   let browser
   for(let i=0;i<60;i++){try{browser=await chromium.connectOverCDP('http://127.0.0.1:9222',{timeout:1000});break}catch{await delay(500)}}
   if(!browser){child.kill();throw Error('WebView2 debug connection unavailable')}
@@ -39,11 +39,12 @@ try{
   await app.page.getByRole('button',{name:'选择图片',exact:true}).click();await delay(1000);chooseFile(resolve('tests/fixtures/avatar.png'))
   await expect(app.page.locator('.avatar-editor img')).toBeVisible({timeout:20000})
   expect(await app.page.locator('.avatar-editor img').evaluate(img=>img.naturalWidth)).toBe(256);results.nativeAvatarImport=true
+  await app.page.locator('.profile').click();expect(new Set(await app.page.locator('.avatar img').evaluateAll(images=>images.map(image=>image.src))).size).toBe(1);await app.page.locator('.settings-heading').click();results.avatarConsistent=true
   await app.page.getByRole('button',{name:'选择背景图片',exact:true}).click();await delay(1000);chooseFile(resolve('tests/fixtures/background.jpg'))
   await expect(app.page.locator('.background-picker')).toHaveClass(/has/,{timeout:20000});results.nativeBackgroundImport=true
   await app.page.locator('#imageOpacity').fill('38');await app.page.locator('#panelOpacity').fill('80');await app.page.locator('#blur').selectOption('14')
   await expect(app.page.locator('.save-state')).toContainText('已保存');results.slidersSave=true
-  await app.page.screenshot({path:'dist/tauri-personalization-dark.png'})
+  await app.page.screenshot({path:'dist/tauri-background-controls.png'});await app.page.locator('.settings-page').evaluate(element=>element.scrollTo(0,0));await app.page.screenshot({path:'dist/tauri-personalization-dark.png'})
   await close(app);app=await launch();await app.page.getByRole('button',{name:'外观设置'}).click()
   await expect(app.page.locator('.app')).toHaveAttribute('data-theme','dark');await expect(app.page.locator('.avatar-editor img')).toBeVisible();await expect(app.page.locator('.background-picker')).toHaveClass(/has/)
   await expect(app.page.locator('#imageOpacity')).toHaveValue('38');await expect(app.page.locator('#panelOpacity')).toHaveValue('80');results.restartPersistence=true

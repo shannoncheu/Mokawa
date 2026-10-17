@@ -135,6 +135,7 @@ impl From<File> for PublicFile {
 struct Bootstrap {
     appearance: store::Appearance,
     has_session: bool,
+    can_clear_session: bool,
     authorization_ready: bool,
     warning: Option<String>,
 }
@@ -144,14 +145,16 @@ async fn bootstrap(state: State<'_, Shared>) -> Reply<Bootstrap> {
     let result = tauri::async_runtime::spawn_blocking(credentials::load)
         .await
         .map_err(|_| CommandError::from(Error::Credentials))?;
-    let (has_session, warning) = match result {
-        Ok(_) => (true, None),
-        Err(Error::NoSession) => (false, None),
-        Err(e) => (false, Some(e.to_string())),
+    let (has_session, can_clear_session, warning) = match result {
+        Ok(_) => (true, true, None),
+        Err(Error::NoSession) => (false, false, None),
+        Err(Error::InvalidSession) => (false, true, Some(Error::InvalidSession.to_string())),
+        Err(e) => (false, false, Some(e.to_string())),
     };
     Ok(Bootstrap {
         appearance,
         has_session,
+        can_clear_session,
         authorization_ready: false,
         warning,
     })
@@ -318,9 +321,13 @@ async fn start_download(state: State<'_, Shared>, id: String) -> Reply<Option<St
     if file.web_content_link.is_empty() {
         return Err(Error::Protocol.into());
     }
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
     let task_id = format!(
-        "{}-{}",
-        mokawa::auth::now(),
+        "{timestamp}-{}-{}",
+        std::process::id(),
         state.next.fetch_add(1, Ordering::Relaxed)
     );
     let record = TransferRecord {

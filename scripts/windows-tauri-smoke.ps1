@@ -10,6 +10,8 @@ try {
     $env:MOKAWA_TEST_EXECUTABLE = "$root\mokawa.exe"
     node scripts/tauri-desktop-test.mjs
     if ($LASTEXITCODE -ne 0) { throw 'Native WebView2 acceptance failed' }
+    ./scripts/windows-tauri-controls.ps1 -Executable "$root/mokawa.exe"
+    ./scripts/windows-tauri-performance.ps1 -Executable "$root/mokawa.exe"
 } finally {
     if (Test-Path "$root\uninstall.exe") {
         $uninstall = Start-Process "$root\uninstall.exe" -ArgumentList '/S' -Wait -PassThru

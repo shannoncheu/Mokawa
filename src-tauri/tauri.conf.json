@@ -45,7 +45,10 @@
     "resources": [
       "../LICENSE",
       "../THIRD_PARTY.md",
-      "../resources/NOTO-OFL.txt"
+      "../resources/NOTO-OFL.txt",
+      "../README.md",
+      "../SECURITY.md",
+      "../docs/VUE_MIGRATION.md"
     ],
     "windows": {
       "webviewInstallMode": {

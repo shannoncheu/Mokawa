@@ -4,7 +4,7 @@ export const desktop = isTauri()
 export async function call<T>(command:string,args?:Record<string,unknown>):Promise<T> {
   if(desktop) return invoke<T>(command,args)
   // Browser preview is explicitly labeled and never claims a successful account/API call.
-  if(command==='bootstrap') return {appearance:{settings:JSON.parse(localStorage.getItem('mokawa-preview-appearance')||'null')||defaults(),avatar:null,background:null,warnings:[]},hasSession:false,authorizationReady:false,warning:null} as T
+  if(command==='bootstrap') return {appearance:{settings:JSON.parse(localStorage.getItem('mokawa-preview-appearance')||'null')||defaults(),avatar:null,background:null,warnings:[]},hasSession:false,canClearSession:false,authorizationReady:false,warning:null} as T
   if(command==='save_appearance'){localStorage.setItem('mokawa-preview-appearance',JSON.stringify(args?.settings));return undefined as T}
   if(command==='cancel_page') return undefined as T
   if(command==='transfer_snapshot') return {records:[],errors:{},speeds:{},persistence_error:null} as T

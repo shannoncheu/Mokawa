@@ -1,9 +1,35 @@
 # Mokawa
 
-Mokawa 是使用 Rust + GPUI 开发的 Windows 10/11 x64 原生 PikPak 客户端。
-应用标识：`app.mokawa.desktop`。不包含 WebView、Electron、Tauri 或多网盘 Provider。
+Mokawa 是使用 Vue 3 + TypeScript + Tauri 2 + Rust 开发的 Windows 10/11 x64 PikPak 桌面客户端。
+应用标识：`app.mokawa.desktop`。仅支持 PikPak；不使用 Electron。新桌面入口使用 Windows WebView2，旧 GPUI 入口保留用于回退。
 
 > 当前为开发基础版本，尚未达到完整客户端交付标准。Windows Runner 的编译、安装/卸载和窗口启动已验证；真实登录、文件访问、Windows 10/11 本机 DPI 与视觉验收仍待完成。没有内置任何其他客户端的私有密钥，也不展示模拟网盘数据。
+
+## Vue 桌面版本
+
+- 中文界面、自定义标题栏、浅色/深色/跟随系统，Noto Sans SC 本地字体及 Windows 字体回退。
+- 设置 → 个性化：本地头像、背景图片、填充/完整显示/拉伸/居中、位置、模糊、亮度、图片和遮罩不透明度、面板不透明度、重置及即时预览。
+- 图片不上传。限制 12 MiB、1600 万像素和解码分配，头像裁成 256×256，背景缩至最多 2560×1600；各保留一份，旧图片 URL 会释放。
+- 主题和滑块即时生效，写盘防抖并显示保存状态。为保证可读性，面板不透明度范围 80–100%；窗口本身不透明，模糊只作用于应用内背景。
+- Rust 保管凭据并复用现有 PikPak 文件/下载实现，前端不接触 Token；文件列表/网格虚拟滚动，任务中心按事件更新。
+- **官方授权仍未接入**：Mokawa 专用注册、回调和 Token 使用范围待确认。当前新用户不能登录；不提供未经确认的密码入口，不伪造文件或空间用量。上传、移动/复制、收藏、离线任务、分享和媒体仍待实现/真实验证。
+
+```powershell
+npm ci
+npm test
+npm run build
+npm run desktop -- dev
+# Windows x64 安装包
+npm run desktop:build -- --ci
+```
+
+需要 Rust、Visual Studio C++ x64 工具、Windows SDK、Node.js 24 和 Windows WebView2。NSIS 安装器在需要时下载微软 WebView2 引导程序，因此缺失运行时时需要联网。安装包未签名。Windows 构建证据与迁移边界见 [迁移记录](docs/VUE_MIGRATION.md)。
+
+安装新版本前先退出旧 GPUI 版本，避免两个版本同时修改任务记录。卸载默认保留本地会话、个性化设置和任务记录；先在应用中清除本地会话/退出登录、重置外观可移除相应数据。手动数据目录为 `%LOCALAPPDATA%/Mokawa`，不要将其中数据或凭据导出到公开问题记录。
+
+## 保留的 GPUI 版本
+
+以下为旧原生入口和原有功能说明，代码保留，不代表 Vue 迁移已完成全部真实账号验收。
 
 ## 当前实现
 
