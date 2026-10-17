@@ -144,6 +144,7 @@ impl Mokawa {
         self.download_scope = tokio_util::sync::CancellationToken::new();
         self.transfers.cancel_all();
         self.authenticated = false;
+        self.logging_out = true;
         self.browser.begin_navigation();
         self.browser.files.clear();
         self.browser.path.clear();
@@ -156,6 +157,7 @@ impl Mokawa {
             let result = job.await.unwrap_or(Err(Error::Cancelled));
             let _ = this.update(cx, |this, cx| {
                 this.busy = false;
+                this.logging_out = false;
                 this.status = match result {
                     Ok(()) => {
                         this.has_saved_session = false;
@@ -214,15 +216,15 @@ impl Mokawa {
                     .child(div().text_color(rgb(0x949ce5)).text_3xl().child("Mokawa"))
                     .child(div().text_2xl().child("连接 PikPak 账号"))
                     .child(div().text_sm().text_color(rgb(0xaab3ce)).child("使用 PikPak 官方授权连接网盘，凭据仅保存在 Windows 凭据管理器中。"))
-                    .child(Self::button(if self.busy { "正在验证会话…" } else { "使用 PikPak 授权登录" }).bg(rgb(0x30374f)).on_click(cx.listener(|this, _, _, cx| {
+                    .child(Self::button(if self.logging_out { "正在清理会话…" } else if self.busy { "正在验证会话…" } else { "使用 PikPak 授权登录" }).bg(rgb(0x30374f)).on_click(cx.listener(|this, _, _, cx| {
                         if !this.busy { this.status = Error::AuthorizationPending.to_string(); cx.notify(); }
                     })))
                     .child(div().p_4().rounded_lg().bg(rgb(0x202331)).text_sm().child("授权尚未开放：Mokawa 的官方客户端注册及回调规则仍待确认。当前无法新增登录，不提供未经确认的密码登录。"))
                     .child(Self::button("重试已保存的会话").on_click(cx.listener(|this, _, _, cx| this.request(Operation::List, cx))))
-                    .when(self.busy, |card| card.child(Self::button("取消会话验证").on_click(cx.listener(|this, _, _, cx| {
+                    .when(self.busy && !self.logging_out, |card| card.child(Self::button("取消会话验证").on_click(cx.listener(|this, _, _, cx| {
                         if this.busy { if let Some(task) = this.task.take() { task.abort(); } this.browser.begin_navigation(); this.busy = false; this.status = "已取消会话验证。".into(); cx.notify(); }
                     }))))
-                    .when(self.has_saved_session, |card| card.child(Self::button("清除保存的会话").on_click(cx.listener(|this, _, _, cx| this.sign_out(cx)))))
+                    .when(self.has_saved_session && !self.busy, |card| card.child(Self::button("清除保存的会话").on_click(cx.listener(|this, _, _, cx| this.sign_out(cx)))))
                     .child(Self::button("外观设置").on_click(cx.listener(|this, _, _, cx| { this.page = Page::Settings; cx.notify(); })))
                     .child(Self::button("查看 PikPak 官方授权说明").on_click(|_, _, cx| cx.open_url("https://mypikpak.com/en-US/help-center/connected_apps/managing_connected_apps/what_are_connected_apps")))) ,
             Page::Settings => {

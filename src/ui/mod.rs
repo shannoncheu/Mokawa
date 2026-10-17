@@ -24,6 +24,7 @@ actions!(mokawa, [Refresh, Quit]);
 struct Mokawa {
     browser: BrowserState,
     authenticated: bool,
+    logging_out: bool,
     has_saved_session: bool,
     theme_mode: mokawa::settings::ThemeMode,
     appearance_subscription: Option<Subscription>,
@@ -81,6 +82,7 @@ impl Mokawa {
         self.pending_delete = None;
         self.context_menu = None;
         let is_listing = matches!(operation, Operation::List);
+        let authenticating = !self.authenticated;
         let generation = self.browser.begin_navigation();
         let parent = self
             .browser
@@ -126,7 +128,9 @@ impl Mokawa {
                     Ok(files) => {
                         this.authenticated = true;
                         this.has_saved_session = true;
-                        this.page = Page::Files;
+                        if authenticating {
+                            this.page = Page::Files;
+                        }
                         let count = files.len();
                         this.browser.apply(generation, files);
                         this.status = format!("共 {count} 项 · PikPak");
@@ -263,8 +267,10 @@ impl Mokawa {
                 let mut rows = Vec::with_capacity(range.len());
                 for row_index in range {
                     let mut group = div().flex().w_full();
-                    for index in row_index * columns..((row_index + 1) * columns).min(files.len()) {
-                        let file = &this.browser.files[files[index]];
+                    for &file_index in
+                        &files[row_index * columns..((row_index + 1) * columns).min(files.len())]
+                    {
+                        let file = &this.browser.files[file_index];
                         let id = file.id.clone();
                         let right_id = id.clone();
                         let name = file.name.clone();
@@ -681,6 +687,7 @@ pub fn run() {
                     let mut view = Mokawa {
                         browser: BrowserState::default(),
                         authenticated: false,
+                        logging_out: false,
                         has_saved_session: false,
                         theme_mode: smoke_theme().unwrap_or_default(),
                         appearance_subscription: None,
