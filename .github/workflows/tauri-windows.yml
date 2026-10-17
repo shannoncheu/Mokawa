@@ -25,6 +25,7 @@ jobs:
         run: npm ci
       - name: Frontend tests and production build
         run: |
+          npm run format:check
           npm test
           npm run build
           npm run licenses

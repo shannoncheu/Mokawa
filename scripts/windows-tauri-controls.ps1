@@ -64,13 +64,18 @@ try {
     $null = [MokawaTauriControls]::GetWindowRect($handle,[ref]$before)
     $point = Move-ToClient $handle 140 22
     [MokawaTauriControls]::mouse_event(2,0,0,0,[UIntPtr]::Zero)
-    $null = [MokawaTauriControls]::SetCursorPos($point.X+24,$point.Y+20)
+    # startDragging crosses IPC; wait for the native move loop, then send real movement steps.
+    Start-Sleep -Milliseconds 250
+    for ($step=1; $step -le 6; $step++) {
+        $null = [MokawaTauriControls]::SetCursorPos($point.X+($step*4),$point.Y+($step*3))
+        Start-Sleep -Milliseconds 60
+    }
     Start-Sleep -Milliseconds 300
     [MokawaTauriControls]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
     Start-Sleep -Milliseconds 300
     $after = New-Object MokawaTauriControls+Rect
     $null = [MokawaTauriControls]::GetWindowRect($handle,[ref]$after)
-    if ($after.Left -eq $before.Left -and $after.Top -eq $before.Top) { throw 'Caption drag did not move window' }
+    if ($after.Left -eq $before.Left -and $after.Top -eq $before.Top) { @{before=$before;after=$after} | ConvertTo-Json | Set-Content dist/tauri-drag-error.json; throw 'Caption drag did not move window' }
     $null = [MokawaTauriControls]::GetClientRect($handle,[ref]$rect)
     $null = Move-ToClient $handle ($rect.Right-112) 22
     Click-Pointer
