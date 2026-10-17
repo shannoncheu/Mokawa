@@ -5,7 +5,7 @@ permissions:
   contents: write
   actions: read
 concurrency:
-  group: publish-mokawa-preview-1
+  group: publish-mokawa-preview-2
   cancel-in-progress: false
 jobs:
   publish:
@@ -13,21 +13,21 @@ jobs:
     timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: v0.1.0-preview.1
+      RELEASE_TAG: v0.1.0-preview.2
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: f9e0bed83ffaa70861d545b1cfbcd249b4ae1493
+          ref: f987a4f2d5ce5f611778da243a5ee4521af425a4
       - name: Verify original Windows build
         shell: pwsh
         run: |
-          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/38981753842" | ConvertFrom-Json
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/39006709784" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'Could not read build evidence' }
-          if ($run.conclusion -ne 'success' -or $run.head_sha -ne 'ce9a945216ac227bfaf632f12ebe2acb5773d9ab' -or $run.path -ne '.github/workflows/windows.yml') { throw 'Unexpected build provenance' }
+          if ($run.conclusion -ne 'success' -or $run.head_sha -ne 'df86508f41e3a2201a6d4ffe7d2410b2753a4030' -or $run.path -ne '.github/workflows/windows.yml') { throw 'Unexpected build provenance' }
       - uses: actions/download-artifact@v4
         with:
           name: Mokawa-windows-x64-unsigned
-          run-id: 38981753842
+          run-id: 39006709784
           github-token: ${{ github.token }}
           path: validated
       - name: Package unchanged Windows binaries
@@ -40,7 +40,7 @@ jobs:
           dist = root / 'dist'
           dist.mkdir(exist_ok=True)
           setup = source / 'dist/Mokawa-0.1.0-x64-setup.exe'
-          expected = 'ece26e34e30182325c06e9071683aa4af012b7326ec2062c40111592cfd0b189'
+          expected = '7d42227ea74eef55483e91085f6741853e27cc444a582c300c10626276df4d33'
           assert hashlib.sha256(setup.read_bytes()).hexdigest() == expected, 'Installer checksum mismatch'
           shutil.copy2(setup, dist / setup.name)
           shutil.copy2(source / 'dist/dependency-licenses.json', dist / 'dependency-licenses.json')
@@ -64,7 +64,7 @@ jobs:
         run: |
           $release = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json isDraft,targetCommitish,assets | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'Could not read release draft' }
-          if (!$release.isDraft -or $release.targetCommitish -ne 'f9e0bed83ffaa70861d545b1cfbcd249b4ae1493' -or $release.assets.Count -ne 0) { throw 'Draft changed; review before uploading' }
+          if (!$release.isDraft -or $release.targetCommitish -ne 'f987a4f2d5ce5f611778da243a5ee4521af425a4' -or $release.assets.Count -ne 0) { throw 'Draft changed; review before uploading' }
           gh release upload $env:RELEASE_TAG dist/Mokawa-0.1.0-x64-setup.exe dist/Mokawa-0.1.0-x64-portable.zip dist/SHA256SUMS.txt dist/dependency-licenses.json --repo $env:GITHUB_REPOSITORY
           if ($LASTEXITCODE -ne 0) { throw 'Asset upload failed; draft remains unpublished' }
           $uploaded = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json assets | ConvertFrom-Json
