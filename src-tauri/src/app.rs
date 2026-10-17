@@ -299,61 +299,130 @@ async fn storage_quota(state: State<'_, Shared>) -> Reply<mokawa::models::DriveQ
 }
 #[tauri::command]
 async fn list_favorites(state: State<'_, Shared>) -> Reply<Vec<PublicFile>> {
-    let _slot = state.files.clone().try_acquire_owned()
+    let _slot = state
+        .files
+        .clone()
+        .try_acquire_owned()
         .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
     let session = state.session().await?;
-    Ok(state.api.list_favorites(&session).await?.into_iter().map(PublicFile::from).collect())
+    Ok(state
+        .api
+        .list_favorites(&session)
+        .await?
+        .into_iter()
+        .map(PublicFile::from)
+        .collect())
 }
 #[tauri::command]
 async fn set_favorite(state: State<'_, Shared>, id: String, starred: bool) -> Reply<()> {
-    let _slot = state.files.clone().try_acquire_owned()
+    let _slot = state
+        .files
+        .clone()
+        .try_acquire_owned()
         .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
     let session = state.session().await?;
-    state.api.set_favorite(&session, &id, starred).await.map_err(Into::into)
+    state
+        .api
+        .set_favorite(&session, &id, starred)
+        .await
+        .map_err(Into::into)
 }
 #[tauri::command]
 async fn list_trash(state: State<'_, Shared>) -> Reply<Vec<PublicFile>> {
-    let _slot = state.files.clone().try_acquire_owned()
+    let _slot = state
+        .files
+        .clone()
+        .try_acquire_owned()
         .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
     let session = state.session().await?;
-    Ok(state.api.list_files(&session, "", true).await?.into_iter().map(PublicFile::from).collect())
+    Ok(state
+        .api
+        .list_files(&session, "", true)
+        .await?
+        .into_iter()
+        .map(PublicFile::from)
+        .collect())
 }
 #[tauri::command]
 async fn restore_files(state: State<'_, Shared>, ids: Vec<String>) -> Reply<()> {
-    let _slot = state.files.clone().try_acquire_owned()
+    let _slot = state
+        .files
+        .clone()
+        .try_acquire_owned()
         .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
     let session = state.session().await?;
-    state.api.restore_files(&session, &ids).await.map_err(Into::into)
+    state
+        .api
+        .restore_files(&session, &ids)
+        .await
+        .map_err(Into::into)
 }
 #[tauri::command]
-async fn permanently_delete_files(state: State<'_, Shared>, ids: Vec<String>, confirmed: bool) -> Reply<()> {
-    if !confirmed { return Err(Error::ConfirmationRequired.into()); }
-    let _slot = state.files.clone().try_acquire_owned()
+async fn permanently_delete_files(
+    state: State<'_, Shared>,
+    ids: Vec<String>,
+    confirmed: bool,
+) -> Reply<()> {
+    if !confirmed {
+        return Err(Error::ConfirmationRequired.into());
+    }
+    let _slot = state
+        .files
+        .clone()
+        .try_acquire_owned()
         .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
     let session = state.session().await?;
-    state.api.permanently_delete(&session, &ids).await.map_err(Into::into)
+    state
+        .api
+        .permanently_delete(&session, &ids)
+        .await
+        .map_err(Into::into)
 }
 #[tauri::command]
 async fn list_shares(state: State<'_, Shared>) -> Reply<Vec<Share>> {
-    let _slot = state.files.clone().try_acquire_owned()
+    let _slot = state
+        .files
+        .clone()
+        .try_acquire_owned()
         .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
     let session = state.session().await?;
     state.api.list_shares(&session).await.map_err(Into::into)
 }
 #[tauri::command]
-async fn create_share(state: State<'_, Shared>, ids: Vec<String>, expiration_days: u32, require_pass_code: bool) -> Reply<Share> {
-    let _slot = state.files.clone().try_acquire_owned()
+async fn create_share(
+    state: State<'_, Shared>,
+    ids: Vec<String>,
+    expiration_days: u32,
+    require_pass_code: bool,
+) -> Reply<Share> {
+    let _slot = state
+        .files
+        .clone()
+        .try_acquire_owned()
         .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
     let session = state.session().await?;
-    state.api.create_share(&session, &ids, expiration_days, require_pass_code).await.map_err(Into::into)
+    state
+        .api
+        .create_share(&session, &ids, expiration_days, require_pass_code)
+        .await
+        .map_err(Into::into)
 }
 #[tauri::command]
 async fn delete_shares(state: State<'_, Shared>, ids: Vec<String>, confirmed: bool) -> Reply<()> {
-    if !confirmed { return Err(Error::ConfirmationRequired.into()); }
-    let _slot = state.files.clone().try_acquire_owned()
+    if !confirmed {
+        return Err(Error::ConfirmationRequired.into());
+    }
+    let _slot = state
+        .files
+        .clone()
+        .try_acquire_owned()
         .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
     let session = state.session().await?;
-    state.api.delete_shares(&session, &ids).await.map_err(Into::into)
+    state
+        .api
+        .delete_shares(&session, &ids)
+        .await
+        .map_err(Into::into)
 }
 #[tauri::command]
 async fn preview_content_link(

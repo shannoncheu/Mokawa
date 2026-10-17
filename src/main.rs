@@ -5,7 +5,6 @@ fn main() {
     mokawa::settings::init_logging();
     if !cfg!(windows) {
         eprintln!("Mokawa ships only for Windows 10/11 x64.");
-        return;
     }
     #[cfg(windows)]
     ui::run();

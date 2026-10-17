@@ -111,7 +111,6 @@ impl FileDetails {
             ));
         }
         self.web_content_link
-            .as_str()
             .is_empty()
             .then(|| {
                 self.links
