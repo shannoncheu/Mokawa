@@ -32,3 +32,11 @@ it('无效保存会话不展示文件主页，也不展示退出登录',async()=
   expect(wrapper.text()).toContain('会话已过期');expect(wrapper.findAll('button').some(button=>button.text()==='退出登录')).toBe(false)
   wrapper.unmount()
 })
+it('写操作失去认证时关闭旧对话框并返回登录页',async()=>{
+  const original=transport.call.getMockImplementation()!
+  transport.call.mockImplementation(async(command:string,...args:unknown[])=>{if(command==='rename_file')throw {code:'authentication',message:'会话已过期'};return original(command,...args)})
+  const wrapper=mount(App,{attachTo:document.body});await flushPromises();await wrapper.find('.file-item').trigger('click')
+  await wrapper.findAll('.selection-toolbar button').find(button=>button.text()==='重命名')!.trigger('click');await flushPromises()
+  await wrapper.find('form.modal').trigger('submit');await flushPromises()
+  expect(wrapper.find('.login-screen').exists()).toBe(true);expect(wrapper.find('[role="dialog"]').exists()).toBe(false);wrapper.unmount()
+})

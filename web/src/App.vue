@@ -24,7 +24,7 @@ watch(page,(_value,old)=>{if(old==='files'){requestGeneration++;void call('cance
 function route(id:string){if(['settings','tasks','login'].includes(id)){page.value=id;return}if(!authenticated.value){page.value='login';notify('请先连接 PikPak 账号。');return}page.value=id;if(id==='files'&&!files.value.length)void load()}
 function select(file:CloudFile,multi:boolean){const next=multi?new Set(selected.value):new Set<string>();if(multi&&next.has(file.id))next.delete(file.id);else next.add(file.id);selected.value=next}
 function context(file:CloudFile,event:MouseEvent){if(!selected.value.has(file.id))select(file,false);menu.value={x:Math.max(8,Math.min(event.clientX,window.innerWidth-195)),y:Math.max(48,Math.min(event.clientY,window.innerHeight-245))}}
-function report(error:unknown){const message=errorMessage(error);if((error as AppError)?.code==='authentication'){authenticated.value=false;files.value=[];selected.value=new Set();path.value=[];page.value='login'}if((error as AppError)?.code!=='cancelled'){status.value=message;notify(message)}}
+function report(error:unknown){const message=errorMessage(error);if((error as AppError)?.code==='authentication'){authenticated.value=false;files.value=[];selected.value=new Set();path.value=[];dialog.value=null;menu.value=null;accountMenu.value=false;page.value='login'}if((error as AppError)?.code!=='cancelled'){status.value=message;notify(message)}}
 async function load(){const generation=++requestGeneration;busy.value=true;status.value='正在读取 PikPak 文件…';try{const result=await call<CloudFile[]>('list_files',{parent:path.value.at(-1)?.id||'',generation});if(generation!==requestGeneration||disposed)return;files.value=result;selected.value=new Set();authenticated.value=true;page.value='files';status.value=`共 ${result.length.toLocaleString('zh-CN')} 项`}catch(error){if(generation===requestGeneration&&!disposed)report(error)}finally{if(generation===requestGeneration)busy.value=false}}
 function openFile(file:CloudFile){if(isFolder(file)){path.value.push({id:file.id,name:file.name});query.value='';void load()}else{select(file,false);detail.value=true}}
 function breadcrumb(index:number){path.value=path.value.slice(0,index+1);query.value='';void load()}
@@ -39,7 +39,7 @@ async function download(){menu.value=null;if(!currentFile.value||isFolder(curren
 function unavailable(feature:string){notify(`${feature}尚未接入，当前无法操作。`)}
 async function windowAction(action:'minimize'|'toggleMaximize'|'close'){if(!desktop){notify('窗口控制仅在 Windows 桌面版本可用。');return}try{if(action==='close')await appearance.flush();await getCurrentWindow()[action]()}catch(error){notify(errorMessage(error))}}
 
-function key(event:KeyboardEvent){if(event.key==='Escape'){if(!writing.value)dialog.value=null;menu.value=null;accountMenu.value=false}if(event.key==='F5'&&authenticated.value){event.preventDefault();void load()}}
+function key(event:KeyboardEvent){if(event.key==='Escape'){if(!writing.value)dialog.value=null;menu.value=null;accountMenu.value=false}if(event.key==='F5'){event.preventDefault();if(authenticated.value&&['files','home'].includes(page.value)&&!dialog.value&&!writing.value&&!busy.value)void load()}}
 let taskRevision=0
 onMounted(async()=>{
   window.addEventListener('keydown',key)

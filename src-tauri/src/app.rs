@@ -141,6 +141,7 @@ struct Bootstrap {
 }
 #[tauri::command]
 async fn bootstrap(state: State<'_, Shared>) -> Reply<Bootstrap> {
+    state.cancel_page();
     let appearance = state.store.load().await;
     let result = tauri::async_runtime::spawn_blocking(credentials::load)
         .await
