@@ -68,6 +68,10 @@ impl Api {
             let page: FilePage = self
                 .drive_request(session, Method::GET, "/drive/v1/files", &query, None)
                 .await?;
+            // Pagination tokens also remain in the cycle-detection set; bound their bytes.
+            if page.next_page_token.len() > 4096 {
+                return Err(Error::Invalid("分页数据超出安全范围"));
+            }
             for file in &page.files {
                 metadata_bytes = metadata_bytes.saturating_add(
                     file.id.len()

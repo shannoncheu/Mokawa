@@ -391,3 +391,21 @@ async fn oversized_metadata_response_is_rejected_without_exposing_body() {
         Error::Invalid("接口响应过大，请缩小请求范围")
     ));
 }
+
+#[tokio::test]
+async fn oversized_pagination_token_stops_before_another_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "files": [], "next_page_token": "s".repeat(4097)
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let error = Api::for_mock(&server.uri())
+        .unwrap()
+        .list_files(&session(), "", false)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, Error::Invalid("分页数据超出安全范围")));
+}
