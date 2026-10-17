@@ -42,11 +42,8 @@ pub async fn download(
     if tokio::fs::try_exists(&destination).await? {
         return Err(Error::Invalid("destination already exists"));
     }
-    let mut file = tokio::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&partial)
-        .await?;
+    let (file, _cleanup) = create_partial(partial.clone()).await?;
+    let mut file = tokio::fs::File::from_std(file);
     let result=async {
         let client=reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).timeout(Duration::from_secs(24*3600)).redirect(reqwest::redirect::Policy::none()).build()?;
         let response=tokio::select!{_ = cancel.cancelled()=>return Err(Error::Cancelled),r=client.get(url).send()=>r?};
@@ -102,4 +99,56 @@ pub async fn load_queue(path: &Path) -> Result<Vec<TransferRecord>> {
         }
     }
     Ok(records)
+}
+
+// Construct the owner inside the blocking job: aborting while open() is pending
+// still drops the returned owner and cleans up the newly created file.
+async fn create_partial(path: std::path::PathBuf) -> Result<(std::fs::File, PartialPath)> {
+    tokio::task::spawn_blocking(move || {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        Ok((file, PartialPath(path)))
+    })
+    .await
+    .map_err(|_| Error::Io)?
+}
+struct PartialPath(std::path::PathBuf);
+impl Drop for PartialPath {
+    fn drop(&mut self) {
+        // Runs on a background worker, never the GPUI thread. Windows file handles
+        // use FILE_SHARE_DELETE; unlink also works if an aborted write still owns a handle.
+        if let Err(error) = std::fs::remove_file(&self.0)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!("Could not remove a download temporary file");
+        }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn abort_removes_owned_partial_file_without_deleting_conflicts() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("test.mokawa.part");
+        let task_path = path.clone();
+        let (ready, started) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let (file, _cleanup) = create_partial(task_path).await.unwrap();
+            let mut file = tokio::fs::File::from_std(file);
+            file.write_all(&[1; 65536]).await.unwrap();
+            ready.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        started.await.unwrap();
+        assert!(path.exists());
+        task.abort();
+        let _ = task.await;
+        assert!(!path.exists());
+        std::fs::write(&path, b"existing").unwrap();
+        assert!(create_partial(path.clone()).await.is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"existing");
+    }
 }
