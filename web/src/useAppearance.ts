@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { call, desktop, errorMessage } from './bridge'
 import { defaults, type AppearanceSettings, type Appearance } from './types'
@@ -41,7 +41,7 @@ export function useAppearance(notice:(message:string)=>void) {
       }else if(old)URL.revokeObjectURL(old)
     } catch {if(controller.signal.aborted){if(url)URL.revokeObjectURL(url);return}if(url)URL.revokeObjectURL(url);if(generation===(kind==='avatar'?avatarGeneration:backgroundGeneration)){if(target.value)URL.revokeObjectURL(target.value);target.value='';notice('本地图片丢失、损坏或超出限制，已回退默认外观。')}}
   }
-  async function initialize(appearance:Appearance){Object.assign(settings,appearance.settings);initialized=true;await Promise.all([imageUrl(appearance.avatar,'avatar'),imageUrl(appearance.background,'background')]);appearance.warnings.forEach(notice)}
+  async function initialize(appearance:Appearance){initialized=false;Object.assign(settings,appearance.settings);await nextTick();initialized=true;await Promise.all([imageUrl(appearance.avatar,'avatar'),imageUrl(appearance.background,'background')]);appearance.warnings.forEach(notice)}
   async function choose(kind:'avatar'|'background') {if(importing.value)return;importing.value=true;try{const path=await call<string|null>('choose_image',{kind});if(path)await imageUrl(path,kind)}catch(e){notice(errorMessage(e))}finally{importing.value=false}}
   async function remove(kind:'avatar'|'background'){try{await call('remove_image',{kind});await imageUrl(null,kind)}catch(e){notice(errorMessage(e))}}
   async function reset(){await Promise.all([remove('avatar'),remove('background')]);Object.assign(settings,defaults());await flush()}

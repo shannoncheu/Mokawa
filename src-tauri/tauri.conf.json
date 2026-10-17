@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "app.mokawa.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run licenses && npm run dev",
+    "beforeBuildCommand": "npm run build && npm run licenses",
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../web-dist"
   },
@@ -48,7 +48,9 @@
       "../resources/NOTO-OFL.txt",
       "../README.md",
       "../SECURITY.md",
-      "../docs/VUE_MIGRATION.md"
+      "../docs/VUE_MIGRATION.md",
+      "../dist/tauri-dependency-licenses.json",
+      "../dist/tauri-frontend-licenses.json"
     ],
     "windows": {
       "webviewInstallMode": {

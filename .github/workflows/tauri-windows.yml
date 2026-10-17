@@ -52,3 +52,5 @@ jobs:
             dist/tauri-*.json
             dist/tauri-*.png
             dist/tauri-*.csv
+            dist/tauri-frontend-licenses.json
+            dist/tauri-dependency-licenses.json

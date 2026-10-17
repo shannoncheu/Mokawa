@@ -28,3 +28,9 @@ it('保存失败明确显示，允许显式重试，不产生无限重试',async
   expect(appearance.saveStatus.value).toBe('保存失败');await vi.advanceTimersByTimeAsync(10000);expect(call).toHaveBeenCalledTimes(1)
   await appearance.flush();expect(appearance.saveStatus.value).toBe('已保存');wrapper.unmount()
 })
+it('恢复非默认外观不触发额外写盘',async()=>{
+  vi.useFakeTimers();let appearance!:ReturnType<typeof useAppearance>
+  const wrapper=mount(defineComponent({setup(){appearance=useAppearance(vi.fn());return()=>null}}))
+  await appearance.initialize({settings:{...defaults(),theme:'dark',imageOpacity:31},avatar:null,background:null,warnings:[]})
+  await vi.advanceTimersByTimeAsync(1000);expect(call).not.toHaveBeenCalled();expect(appearance.dark.value).toBe(true);wrapper.unmount()
+})

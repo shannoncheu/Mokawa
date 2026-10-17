@@ -348,8 +348,8 @@ async fn start_download(state: State<'_, Shared>, id: String) -> Reply<Option<St
     Ok(Some(task_id))
 }
 #[tauri::command]
-async fn transfer_snapshot(state: State<'_, Shared>) -> mokawa::transfers::TransferSnapshot {
-    state.snapshot().await
+async fn transfer_snapshot(state: State<'_, Shared>) -> Reply<mokawa::transfers::TransferSnapshot> {
+    Ok(state.snapshot().await)
 }
 #[tauri::command]
 fn cancel_transfer(state: State<'_, Shared>, id: String) {

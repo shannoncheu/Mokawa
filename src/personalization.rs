@@ -149,6 +149,27 @@ mod tests {
         assert!(sanitize_image(&path, false).is_err());
     }
     #[test]
+    fn jpeg_webp_and_pixel_limits_are_enforced() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, format) in [
+            ("photo.jpg", ImageFormat::Jpeg),
+            ("photo.webp", ImageFormat::WebP),
+        ] {
+            let path = dir.path().join(name);
+            image::RgbImage::new(40, 30)
+                .save_with_format(&path, format)
+                .unwrap();
+            let bytes = sanitize_image(&path, false).unwrap();
+            assert_eq!(image::guess_format(&bytes).unwrap(), ImageFormat::Jpeg);
+        }
+        let path = dir.path().join("oversized.png");
+        image::GrayImage::new(5000, 4000).save(&path).unwrap();
+        assert!(matches!(
+            sanitize_image(&path, false),
+            Err(Error::Invalid("图片不能超过 1600 万像素"))
+        ));
+    }
+    #[test]
     fn appearance_limits_preserve_readability() {
         let mut p = Personalization::default();
         assert!(p.validate().is_ok());
