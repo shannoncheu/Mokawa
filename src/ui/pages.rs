@@ -97,6 +97,7 @@ impl Mokawa {
         ] {
             nav = nav.child(
                 Self::button(label)
+                    .py_1()
                     .w_full()
                     .flex()
                     .gap_3()

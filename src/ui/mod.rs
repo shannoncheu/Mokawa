@@ -20,7 +20,7 @@ use mokawa::{
 use pages::Page;
 use std::sync::Arc;
 use theme::color as rgb;
-actions!(mokawa, [Refresh, Quit]);
+actions!(mokawa, [Refresh, Quit, Dismiss]);
 struct Mokawa {
     browser: BrowserState,
     authenticated: bool,
@@ -191,6 +191,11 @@ impl Render for Mokawa {
             .bg(rgb(0x141621))
             .text_color(rgb(0xe4e7f2))
             .font_family("Microsoft YaHei UI")
+            .on_action(cx.listener(|this, _: &Dismiss, _, cx| {
+                this.context_menu = None;
+                this.pending_delete = None;
+                cx.notify();
+            }))
             .child(titlebar)
             .child(div().flex_1().min_h_0().child(body))
     }
@@ -635,6 +640,7 @@ pub fn run() {
         input::init(cx);
         cx.bind_keys([
             KeyBinding::new("f5", Refresh, None),
+            KeyBinding::new("escape", Dismiss, None),
             KeyBinding::new("alt-f4", Quit, None),
         ]);
         cx.on_action(|_: &Quit, cx| cx.quit());
