@@ -27,7 +27,7 @@ it('一万条文件只挂载可见行，销毁时释放尺寸订阅', async () =
     await wrapper.setProps({ grid: true })
     expect(wrapper.findAll('.file-item').length).toBeLessThan(40)
     await wrapper.find('.file-item').trigger('click', { ctrlKey: true })
-    expect(wrapper.emitted('select')?.[0]?.[1]).toBe(true)
+    expect(wrapper.emitted('select')?.[0]?.[1]).toEqual({ multi: true, range: false })
     const viewport = wrapper.find('.file-viewport')
     Object.defineProperty(viewport.element, 'scrollTop', { value: 100_000, writable: true })
     await viewport.trigger('scroll')

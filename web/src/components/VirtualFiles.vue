@@ -2,11 +2,16 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Folder, File, Image, Film, Music, Check } from '@lucide/vue'
 import { isFolder, formatBytes, formatDate, type CloudFile } from '../types'
-const props = defineProps<{ files: CloudFile[]; grid: boolean; selected: Set<string> }>()
+const props = defineProps<{
+  files: CloudFile[]
+  grid: boolean
+  selected: Set<string>
+  selectionMode?: boolean
+}>()
 const emit = defineEmits<{
-  select: [file: CloudFile, multi: boolean]
+  select: [file: CloudFile, modifiers: { multi: boolean; range: boolean }]
   open: [file: CloudFile]
-  menu: [file: CloudFile, event: MouseEvent]
+  menu: [file: CloudFile, event: MouseEvent | KeyboardEvent]
 }>()
 const viewport = ref<HTMLElement>()
 const scroll = ref(0)
@@ -61,11 +66,35 @@ const icon = (file: CloudFile) =>
         : file.mime_type.startsWith('audio/')
           ? Music
           : File
+function activate(event: MouseEvent, file: CloudFile) {
+  if (props.selectionMode || event.ctrlKey || event.metaKey || event.shiftKey) {
+    emit('select', file, {
+      multi: event.ctrlKey || event.metaKey || props.selectionMode || props.selected.has(file.id),
+      range: event.shiftKey,
+    })
+  } else emit('open', file)
+}
+function keyboard(event: KeyboardEvent, file: CloudFile) {
+  if (event.key === ' ' || event.key === 'Spacebar') {
+    event.preventDefault()
+    emit('select', file, {
+      multi: event.ctrlKey || event.metaKey || props.selectionMode || props.selected.has(file.id),
+      range: event.shiftKey,
+    })
+  } else if (event.key === 'Enter') {
+    event.preventDefault()
+    emit('open', file)
+  } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+    event.preventDefault()
+    emit('menu', file, event)
+  }
+}
 </script>
 <template>
   <div
     ref="viewport"
     class="file-viewport"
+    :class="{ 'selection-mode': selectionMode }"
     role="region"
     aria-label="文件区域"
     @scroll="scroll = ($event.target as HTMLElement).scrollTop"
@@ -87,18 +116,19 @@ const icon = (file: CloudFile) =>
           :key="file.id"
           class="file-item"
           :class="{ selected: selected.has(file.id), folder: isFolder(file) }"
+          role="group"
+          :aria-label="file.name"
+          :aria-selected="selected.has(file.id)"
           tabindex="0"
-          @click="emit('select', file, $event.ctrlKey || $event.metaKey)"
-          @keydown.space.prevent="emit('select', file, true)"
-          @keydown.enter="emit('open', file)"
-          @dblclick="emit('open', file)"
+          @click="activate($event, file)"
+          @keydown="keyboard($event, file)"
           @contextmenu.prevent="emit('menu', file, $event)"
         >
           <button
             class="selection-box"
             :aria-label="`${selected.has(file.id) ? '取消选择' : '选择'} ${file.name}`"
             :aria-pressed="selected.has(file.id)"
-            @click.stop="emit('select', file, true)"
+            @click.stop="emit('select', file, { multi: true, range: $event.shiftKey })"
           >
             <Check v-if="selected.has(file.id)" :size="12" />
           </button>

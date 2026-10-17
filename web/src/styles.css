@@ -197,26 +197,31 @@ button svg {
   box-shadow: var(--shadow);
 }
 .titlebar {
-  height: 48px;
+  height: 52px;
   display: flex;
   align-items: center;
   position: relative;
   z-index: 5;
   background: var(--canvas);
-  border-bottom: 0;
+  border-bottom: 1px solid var(--line);
   user-select: none;
 }
 .titlebar-drag {
   display: flex;
   align-items: center;
   gap: 0;
-  padding-left: 0;
+  padding-left: 16px;
   flex: 1;
   height: 100%;
   font-size: 13px;
 }
 .titlebar-drag b {
   font-weight: 600;
+}
+.titlebar-name {
+  color: var(--text);
+  font-size: 13px;
+  letter-spacing: 0.01em;
 }
 .brand-mark {
   font-style: normal;
@@ -596,7 +601,7 @@ button svg {
   gap: 10px;
   border-radius: 8px;
   padding: 0 14px;
-  cursor: default;
+  cursor: pointer;
   border: 1px solid transparent;
   min-width: 0;
 }
@@ -615,6 +620,16 @@ button svg {
   border-radius: 4px;
   background: var(--solid);
   border: 1px solid var(--line);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.file-item:hover .selection-box,
+.file-item:focus-visible .selection-box,
+.file-item.selected .selection-box,
+.selection-mode .selection-box {
+  opacity: 1;
+  pointer-events: auto;
 }
 .selected .selection-box {
   background: var(--accent);
@@ -699,6 +714,13 @@ button svg {
   background: none;
   min-height: 28px;
   font-size: 11px;
+}
+.selection-mode-button {
+  white-space: nowrap;
+}
+.selection-mode-button.active {
+  color: var(--accent-text);
+  background: var(--accent-soft);
 }
 .empty-state {
   min-height: 220px;
@@ -1710,7 +1732,7 @@ progress::-webkit-progress-value {
 .file-context {
   position: fixed;
   z-index: 20;
-  width: 190px;
+  width: 218px;
   padding: 7px;
   display: flex;
   flex-direction: column;
@@ -1722,6 +1744,9 @@ progress::-webkit-progress-value {
   background: none;
   border: 0;
   font-size: 11px;
+}
+.file-context button {
+  min-height: 32px;
 }
 .account-popover {
   position: absolute;
