@@ -105,7 +105,6 @@ const offlineLoading = ref(false)
 const offlineError = ref('')
 const offlineSource = ref('')
 const offlineDestination = ref('')
-const taskKind = ref<'all' | 'local' | 'cloud'>('all')
 const dialog = ref<'folder' | 'rename' | 'trash' | 'offline' | 'share' | null>(null)
 const newName = ref('')
 const writing = ref(false)
@@ -131,10 +130,10 @@ const pageLoading = ref(false)
 const remoteError = ref('')
 const shareExpiration = ref(7)
 const sharePassword = ref(true)
-watch([page, taskKind], ([currentPage, kind]) => {
+watch(page, (currentPage) => {
   if (offlineTimer) clearInterval(offlineTimer)
   offlineTimer = undefined
-  if (currentPage === 'offline' || (currentPage === 'tasks' && kind !== 'local')) {
+  if (currentPage === 'offline') {
     offlineTimer = setInterval(() => {
       const active = offlineTasks.value.some((task) =>
         ['PHASE_TYPE_RUNNING', 'PHASE_TYPE_PENDING'].includes(task.phase.toUpperCase()),
@@ -165,22 +164,6 @@ const filteredTasks = computed(() => {
   if (taskFilter.value === 'completed') return rows.filter((task) => task.phase === 'Completed')
   if (taskFilter.value === 'failed')
     return rows.filter((task) => ['Failed', 'Interrupted'].includes(task.phase))
-  return rows
-})
-const filteredCloudTasks = computed(() => {
-  const rows = offlineTasks.value
-  if (taskFilter.value === 'active')
-    return rows.filter((task) =>
-      ['PHASE_TYPE_RUNNING', 'PHASE_TYPE_PENDING'].includes(task.phase.toUpperCase()),
-    )
-  if (taskFilter.value === 'completed')
-    return rows.filter((task) =>
-      ['PHASE_TYPE_COMPLETE', 'COMPLETE', 'COMPLETED'].includes(task.phase.toUpperCase()),
-    )
-  if (taskFilter.value === 'failed')
-    return rows.filter((task) =>
-      ['PHASE_TYPE_ERROR', 'ERROR', 'FAILED'].includes(task.phase.toUpperCase()),
-    )
   return rows
 })
 const recentTasks = computed(() => [...tasks.value.records].reverse().slice(0, 3))
@@ -636,13 +619,13 @@ function mediaFailure(kind: '视频' | '音频') {
   const code = mediaElement?.error?.code
   const reason =
     code === 2
-      ? '读取网络失败，访问地址可能已过期或网络已中断。'
+      ? 'WebView2 无法读取媒体网络响应；浏览器事件不公开 CDN 的 HTTP 状态，因此无法区分签名地址过期、授权拒绝、Range 不兼容或网络中断。'
       : code === 3
         ? 'WebView2 无法解码此媒体编码。'
         : code === 4
-          ? '访问地址无效或媒体格式不受支持。'
+          ? '媒体来源或容器格式不受支持；当前文件可能没有可用播放 rendition。'
           : '媒体读取已中止。'
-  previewError.value = `${kind}${reason}可重试或下载文件。`
+  previewError.value = `${kind}预览失败。${reason}可刷新预览或下载文件。`
 }
 function retryPreview() {
   detail.value = false
@@ -843,10 +826,6 @@ function newOfflineTask() {
   dialog.value = 'offline'
   void nextTick(() => modal.value?.querySelector<HTMLInputElement>('input')?.focus())
 }
-function selectTaskKind(kind: 'all' | 'local' | 'cloud') {
-  taskKind.value = kind
-  if (kind !== 'local') void refreshOffline()
-}
 async function importTorrent() {
   try {
     const magnet = await call<string | null>('choose_torrent')
@@ -871,6 +850,13 @@ async function retryLocalDownload(fileId: string) {
   try {
     const result = await call<string | null>('start_download_batch', { ids: [fileId] })
     if (result) notify('已重新加入下载队列。')
+  } catch (error) {
+    report(error)
+  }
+}
+async function openTransferLocation(id: string, revealFile: boolean) {
+  try {
+    await call('open_transfer_location', { id, revealFile })
   } catch (error) {
     report(error)
   }
@@ -1136,7 +1122,7 @@ function contextShare() {
           </button>
           <div class="nav-caption">传输与应用</div>
           <button :class="{ active: page === 'tasks' }" @click="route('tasks')">
-            <Download :size="18" />任务中心<span
+            <Download :size="18" />下载<span
               v-if="tasks.records.some((t) => t.phase === 'Running')"
               class="activity-dot"
             /></button
@@ -1234,13 +1220,16 @@ function contextShare() {
           <button
             class="text-button"
             disabled
-            title="密码登录需要 Mokawa 专用的 PikPak 客户端注册信息"
+            title="PikPak 官方 CLI 文档标注密码登录已不再支持；旧客户端依赖未授权的平台客户端身份"
           >
-            用户名/邮箱与密码登录（尚不可用）
+            用户名/邮箱与密码登录（PikPak 当前不支持）
           </button>
           <small class="privacy"
-            >PikPak 密码接口需要经授权的客户端身份及安全验证流程。Mokawa
-            尚未取得该注册信息，因此不会收集或提交你的密码。</small
+            >旧版公开客户端把密码发送到 /v1/auth/signin，并依赖其平台
+            client_id/client_secret、设备参数和验证码；官方 CLI 已说明密码登录不再支持。Mokawa
+            不会复制这些身份参数、绕过验证码或收集你的密码。请通过 PikPak
+            支持的第三方登录方式建立账号会话，再按官方授权流程连接；Google 等第三方账号还需确认
+            PikPak 是否允许设置独立密码。</small
           >
           <div class="local-history-links">
             <button class="text-button" @click="route('recent')">
@@ -1302,7 +1291,7 @@ function contextShare() {
               </div>
               <div class="setting-section">
                 <h2>下载行为</h2>
-                <p>取消或失败的任务可从任务中心查看；暂停和续传能力尚未验证。</p>
+                <p>取消或失败的任务可从下载查看；暂停和续传能力尚未验证。</p>
               </div>
             </section>
             <section v-else-if="settingsSection === 'account'" class="simple-settings">
@@ -1445,153 +1434,90 @@ function contextShare() {
       <section v-else-if="page === 'tasks'" class="content-panel panel tasks-page">
         <div class="page-heading">
           <div>
-            <p class="eyebrow">传输记录</p>
-            <h1>任务中心</h1>
+            <p class="eyebrow">本机传输</p>
+            <h1>下载</h1>
           </div>
           <span class="muted">最多同时下载 2 个文件</span>
-          <button
-            v-if="taskKind !== 'local' && authenticated"
-            class="icon-button"
-            aria-label="刷新云端任务"
-            :disabled="offlineLoading"
-            @click="refreshOffline"
-          >
-            <RefreshCw :size="16" :class="{ spin: offlineLoading }" />
-          </button>
         </div>
         <div class="task-filters">
-          <div class="task-filter-group" aria-label="任务状态筛选">
-            <span>状态</span>
+          <div class="task-filter-group" aria-label="下载状态筛选">
             <button :class="{ active: taskFilter === 'all' }" @click="taskFilter = 'all'">
-              全部
-              <span>{{
-                taskKind === 'cloud'
-                  ? offlineTasks.length
-                  : taskKind === 'local'
-                    ? tasks.records.length
-                    : tasks.records.length + offlineTasks.length
-              }}</span></button
-            ><button :class="{ active: taskFilter === 'active' }" @click="taskFilter = 'active'">
-              进行中</button
-            ><button
+              全部 <span>{{ tasks.records.length }}</span>
+            </button>
+            <button :class="{ active: taskFilter === 'active' }" @click="taskFilter = 'active'">
+              进行中
+            </button>
+            <button
               :class="{ active: taskFilter === 'completed' }"
               @click="taskFilter = 'completed'"
             >
-              已完成</button
-            ><button :class="{ active: taskFilter === 'failed' }" @click="taskFilter = 'failed'">
+              已完成
+            </button>
+            <button :class="{ active: taskFilter === 'failed' }" @click="taskFilter = 'failed'">
               失败
             </button>
           </div>
-          <div class="task-filter-group" aria-label="任务类型筛选">
-            <span>类型</span>
-            <button
-              class="tasks-kind"
-              :class="{ active: taskKind === 'all' }"
-              @click="selectTaskKind('all')"
-            >
-              全部任务
-            </button>
-            <button
-              class="tasks-kind"
-              :class="{ active: taskKind === 'local' }"
-              @click="selectTaskKind('local')"
-            >
-              本地下载
-            </button>
-            <button
-              class="tasks-kind"
-              :class="{ active: taskKind === 'cloud' }"
-              @click="selectTaskKind('cloud')"
-            >
-              云端离线
-            </button>
-          </div>
         </div>
-        <template v-if="taskKind !== 'local'">
-          <h2 v-if="taskKind === 'all'" class="task-source-heading">云端离线</h2>
-          <div v-if="!authenticated" class="empty-state">
-            <CircleAlert :size="36" />
-            <h2>连接 PikPak 后查看云端任务</h2>
-            <button class="primary" @click="route('login')">连接账号</button>
-          </div>
-          <div v-else-if="offlineLoading && !offlineTasks.length" class="empty-state">
-            <LoaderCircle class="spin" :size="32" />
-            <h2>正在读取云端任务…</h2>
-          </div>
-          <div v-else-if="offlineError" class="empty-state">
-            <CircleAlert :size="36" />
-            <h2>读取云端任务失败</h2>
-            <p>{{ offlineError }}</p>
-            <button :disabled="offlineLoading" @click="refreshOffline">重试</button>
-          </div>
-          <div v-else-if="!filteredCloudTasks.length" class="empty-state">
-            <Download :size="36" />
-            <h2>{{ offlineTasks.length ? '没有符合筛选条件的任务' : '暂无云端离线任务' }}</h2>
-            <button class="primary" @click="newOfflineTask">新建离线任务</button>
-          </div>
-          <article v-for="task in filteredCloudTasks" :key="task.id" class="transfer-row">
-            <div class="file-type-icon"><Download :size="20" /></div>
-            <div class="transfer-content">
-              <b>{{ task.file_name || task.name || 'PikPak 离线任务' }}</b>
-              <div class="transfer-meta">
-                <span>{{ offlinePhaseLabel(task.phase) }}</span
-                ><span v-if="task.file_size">{{ formatBytes(task.file_size) }}</span>
-              </div>
-              <progress
-                v-if="task.progress > 0 && task.progress <= 100"
-                :value="task.progress"
-                max="100"
-              />
-              <p v-if="task.message" class="error-text">{{ task.message }}</p>
+        <div v-if="tasks.persistence_error" class="error-box">{{ tasks.persistence_error }}</div>
+        <div v-if="!filteredTasks.length" class="empty-state">
+          <Download :size="38" />
+          <h2>{{ tasks.records.length ? '没有符合条件的下载' : '暂无下载' }}</h2>
+          <p v-if="!tasks.records.length">从“我的文件”选择文件并开始下载，任务会显示在这里。</p>
+          <button class="primary" @click="route('files')">前往我的文件</button>
+        </div>
+        <article v-for="task in filteredTasks" :key="task.id" class="transfer-row">
+          <div class="file-type-icon"><Download :size="22" /></div>
+          <div class="transfer-content">
+            <b :title="task.file_name">{{ task.file_name }}</b>
+            <div class="transfer-meta">
+              <span>{{ task.total ? formatBytes(task.total) : formatBytes(task.completed) }}</span>
+              <span>{{ phases[task.phase] }}</span>
+              <span v-if="tasks.speeds[task.id]">
+                {{ formatBytes(tasks.speeds[task.id]) }}/秒
+              </span>
             </div>
-            <button class="icon-button" aria-label="刷新离线任务" @click="refreshOffline">
-              <RefreshCw :size="16" />
-            </button>
-          </article>
-        </template>
-        <template v-if="taskKind !== 'cloud'">
-          <h2 v-if="taskKind === 'all'" class="task-source-heading">本地下载</h2>
-          <div v-if="!filteredTasks.length" class="empty-state">
-            <Download :size="38" />
-            <h2>{{ tasks.records.length ? '没有符合筛选条件的任务' : '暂无本地下载记录' }}</h2>
-            <p>本地任务记录可在未连接 PikPak 时查看；开始下载后会显示在这里。</p>
+            <progress v-if="task.total" :value="task.completed" :max="task.total" />
+            <p v-if="tasks.errors[task.id]" class="error-text">{{ tasks.errors[task.id] }}</p>
           </div>
-          <div v-if="tasks.persistence_error" class="error-box">{{ tasks.persistence_error }}</div>
-          <article v-for="task in filteredTasks" :key="task.id" class="transfer-row">
-            <div class="file-type-icon"><Download :size="22" /></div>
-            <div class="transfer-content">
-              <b>{{ task.file_name }}</b>
-              <div class="transfer-meta">
-                <span
-                  >{{ formatBytes(task.completed)
-                  }}<template v-if="task.total"> / {{ formatBytes(task.total) }}</template></span
-                ><span>{{ phases[task.phase] }}</span
-                ><span v-if="tasks.speeds[task.id]"
-                  >{{ formatBytes(tasks.speeds[task.id]) }}/秒</span
-                >
-              </div>
-              <progress v-if="task.total" :value="task.completed" :max="task.total" />
-              <p v-if="tasks.errors[task.id]" class="error-text">{{ tasks.errors[task.id] }}</p>
-            </div>
+          <button
+            v-if="['Queued', 'Running'].includes(task.phase)"
+            class="icon-button"
+            aria-label="取消下载"
+            title="取消下载"
+            @click="call('cancel_transfer', { id: task.id }).catch(report)"
+          >
+            <X :size="17" />
+          </button>
+          <button
+            v-else-if="['Failed', 'Interrupted'].includes(task.phase) && task.file_id"
+            class="icon-button"
+            aria-label="重新下载"
+            title="重新下载"
+            @click="retryLocalDownload(task.file_id)"
+          >
+            <RefreshCw :size="16" />
+          </button>
+          <template v-else-if="task.phase === 'Completed' && task.local_path">
             <button
-              v-if="['Queued', 'Running'].includes(task.phase)"
               class="icon-button"
-              aria-label="取消下载"
-              @click="call('cancel_transfer', { id: task.id }).catch(report)"
+              aria-label="打开下载文件"
+              title="打开文件"
+              @click="openTransferLocation(task.id, true)"
             >
-              <X :size="17" /></button
-            ><button
-              v-else-if="['Failed', 'Interrupted'].includes(task.phase) && task.file_id"
+              <Link2 :size="16" />
+            </button>
+            <button
               class="icon-button"
-              aria-label="重新下载"
-              title="重新下载"
-              @click="retryLocalDownload(task.file_id)"
+              aria-label="打开所在文件夹"
+              title="打开所在文件夹"
+              @click="openTransferLocation(task.id, false)"
             >
-              <RefreshCw :size="16" /></button
-            ><Check v-else-if="task.phase === 'Completed'" class="success" :size="20" />
-          </article>
-          <p class="footnote">取消与失败重试可用；暂停和断点续传尚未通过真实 PikPak 链接验证。</p>
-        </template>
+              <Folder :size="16" />
+            </button>
+          </template>
+          <Check v-else-if="task.phase === 'Completed'" class="success" :size="20" />
+        </article>
+        <p class="footnote">下载记录来自本机任务管理器。暂停和断点续传当前尚未支持。</p>
       </section>
       <section v-else-if="page === 'recent'" class="content-panel panel tasks-page">
         <div class="page-heading">
@@ -1798,7 +1724,7 @@ function contextShare() {
               aria-label="搜索文件"
             />
           </div>
-          <button class="icon-button" aria-label="任务中心" @click="route('tasks')">
+          <button class="icon-button" aria-label="下载" @click="route('tasks')">
             <Download :size="18" />
           </button>
         </div>
@@ -1839,7 +1765,7 @@ function contextShare() {
                 ><ChevronRight :size="16" /></button
               ><button @click="route('tasks')">
                 <Download :size="19" /><span
-                  ><b>任务中心</b
+                  ><b>下载</b
                   ><small>{{
                     tasks.records.length ? `${tasks.records.length} 个下载任务` : '查看下载任务'
                   }}</small></span
@@ -1889,7 +1815,7 @@ function contextShare() {
                 <p>任务状态来自本机下载队列</p>
               </div>
               <button v-if="recentTasks.length" class="text-button" @click="route('tasks')">
-                打开任务中心 <ChevronRight :size="14" />
+                打开下载 <ChevronRight :size="14" />
               </button>
             </div>
             <div v-if="recentTasks.length" class="home-recent">
@@ -1916,7 +1842,7 @@ function contextShare() {
               aria-label="搜索当前文件夹"
             /><kbd>当前目录</kbd>
           </div>
-          <button class="icon-button" aria-label="任务中心" @click="route('tasks')">
+          <button class="icon-button" aria-label="下载" @click="route('tasks')">
             <Download :size="19" /></button
           ><button class="avatar" aria-label="账号菜单" @click.stop="accountMenu = !accountMenu">
             <img v-if="avatar" :src="avatar" alt="Mokawa 本地头像" /><UserRound v-else :size="19" />

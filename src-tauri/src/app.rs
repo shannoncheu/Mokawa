@@ -440,7 +440,7 @@ async fn preview_content_link(
     let cancel = state.preview_scope(generation)?;
     tokio::select! {
         _ = cancel.cancelled() => Err(Error::Cancelled.into()),
-        result = state.api.file_content_link(&session, &id) => result.map_err(Into::into),
+        result = state.api.file_playback_link(&session, &id) => result.map_err(Into::into),
     }
 }
 #[tauri::command]
@@ -591,6 +591,7 @@ async fn start_downloads(state: &Backend, ids: Vec<String>) -> Reply<Option<Stri
             completed: 0,
             total: Some(file.size),
             phase: TransferPhase::Queued,
+            local_path: None,
         };
         let center = center.clone();
         let directory = directory.clone();
@@ -697,6 +698,50 @@ async fn transfer_snapshot(state: State<'_, Shared>) -> Reply<mokawa::transfers:
 fn cancel_transfer(state: State<'_, Shared>, id: String) {
     state.center.cancel(&id);
 }
+#[tauri::command]
+async fn open_transfer_location(
+    state: State<'_, Shared>,
+    id: String,
+    reveal_file: bool,
+) -> Reply<()> {
+    if id.is_empty() || id.len() > 256 || id.chars().any(char::is_control) {
+        return Err(Error::Invalid("下载任务标识").into());
+    }
+    let record = state
+        .center
+        .snapshot()
+        .records
+        .into_iter()
+        .find(|record| record.id == id && record.phase == TransferPhase::Completed)
+        .ok_or_else(|| CommandError::from(Error::Invalid("该下载尚未完成或记录已不存在")))?;
+    let path = record
+        .local_path
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| CommandError::from(Error::Invalid("旧版任务没有本地文件路径记录")))?;
+    let target = if reveal_file {
+        if !path.is_file() {
+            return Err(Error::Invalid("下载文件已被移动或删除").into());
+        }
+        path
+    } else {
+        path.parent()
+            .filter(|parent| parent.is_dir())
+            .ok_or_else(|| CommandError::from(Error::Invalid("下载目录已被移动或删除")))?
+            .to_path_buf()
+    };
+    tokio::task::spawn_blocking(move || {
+        let mut command = std::process::Command::new("explorer.exe");
+        if reveal_file {
+            command.arg(format!("/select,{}", target.display()));
+        } else {
+            command.arg(target);
+        }
+        command.spawn().map(|_| ()).map_err(|_| Error::Io)
+    })
+    .await
+    .map_err(|_| CommandError::from(Error::Io))??;
+    Ok(())
+}
 pub fn run() {
     mokawa::settings::init_logging();
     let background_runtime = tokio::runtime::Builder::new_multi_thread()
@@ -728,7 +773,7 @@ pub fn run() {
             if let Some(window)=app.get_webview_window("main") { let _=window.unminimize();let _=window.show();let _=window.set_focus(); }
         }))
         .manage(backend.clone())
-        .invoke_handler(tauri::generate_handler![bootstrap,begin_authorization,connect_personal_access_token,open_auth_help,save_appearance,choose_image,remove_image,cancel_page,cancel_preview,list_files,list_favorites,set_favorite,list_trash,restore_files,permanently_delete_files,list_shares,create_share,delete_shares,storage_quota,preview_content_link,text_preview,create_folder,rename_file,trash_files,sign_out,start_download,start_download_batch,transfer_snapshot,cancel_transfer,offline_tasks,create_offline_task,retry_offline_task,delete_offline_task,choose_torrent])
+        .invoke_handler(tauri::generate_handler![bootstrap,begin_authorization,connect_personal_access_token,open_auth_help,save_appearance,choose_image,remove_image,cancel_page,cancel_preview,list_files,list_favorites,set_favorite,list_trash,restore_files,permanently_delete_files,list_shares,create_share,delete_shares,storage_quota,preview_content_link,text_preview,create_folder,rename_file,trash_files,sign_out,start_download,start_download_batch,transfer_snapshot,cancel_transfer,open_transfer_location,offline_tasks,create_offline_task,retry_offline_task,delete_offline_task,choose_torrent])
         .setup(|app|{
             if let Some(window)=app.get_webview_window("main") && let Some(monitor)=window.current_monitor()? {
                 let area=monitor.work_area();let scale=monitor.scale_factor();

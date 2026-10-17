@@ -16,7 +16,7 @@ pub async fn download(
     name: &str,
     cancel: CancellationToken,
     progress: tokio::sync::watch::Sender<u64>,
-) -> Result<()> {
+) -> Result<std::path::PathBuf> {
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
     }
@@ -66,7 +66,7 @@ pub async fn download(
         }
     }
     let _ = tokio::fs::remove_file(&partial).await;
-    result
+    result.map(|()| destination)
 }
 async fn available_name(directory: &Path, requested: &str) -> Result<String> {
     if !name_occupied(directory, requested).await? {

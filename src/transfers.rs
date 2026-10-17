@@ -166,8 +166,11 @@ impl TransferCenter {
         {
             let mut state = self.0.state.lock().unwrap();
             if let Some(record) = state.records.iter_mut().find(|r| r.id == id) {
+                if let Ok(path) = &result {
+                    record.local_path = Some(path.to_string_lossy().into_owned());
+                }
                 record.phase = match &result {
-                    Ok(()) => TransferPhase::Completed,
+                    Ok(_) => TransferPhase::Completed,
                     Err(Error::Cancelled) => TransferPhase::Cancelled,
                     Err(_) => TransferPhase::Failed,
                 };
@@ -179,7 +182,7 @@ impl TransferCenter {
         }
         self.persist().await;
         self.0.changes.send_replace(());
-        result
+        result.map(|_| ())
     }
     fn set_phase(&self, id: &str, phase: TransferPhase) {
         if let Some(record) = self
@@ -228,6 +231,7 @@ mod tests {
             completed: 0,
             total: None,
             phase: TransferPhase::Queued,
+            local_path: None,
         }
     }
     #[tokio::test]

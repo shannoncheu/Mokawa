@@ -366,11 +366,32 @@ async fn interrupted_queue_reloads_without_claiming_resume() {
         completed: 12,
         total: Some(30),
         phase: TransferPhase::Running,
+        local_path: None,
     }];
     mokawa::download::save_queue(&path, &records).await.unwrap();
     let loaded = mokawa::download::load_queue(&path).await.unwrap();
     assert_eq!(loaded[0].phase, TransferPhase::Interrupted);
     assert_eq!(loaded[0].completed, 12);
+}
+#[tokio::test]
+async fn completed_transfer_keeps_its_local_path_for_open_actions() {
+    let d = tempfile::tempdir().unwrap();
+    let path = d.path().join("queue.json");
+    let records = vec![TransferRecord {
+        id: "done".into(),
+        file_id: "a".into(),
+        file_name: "video.mp4".into(),
+        completed: 100,
+        total: Some(100),
+        phase: TransferPhase::Completed,
+        local_path: Some("C:/Users/test/Downloads/video.mp4".into()),
+    }];
+    mokawa::download::save_queue(&path, &records).await.unwrap();
+    let loaded = mokawa::download::load_queue(&path).await.unwrap();
+    assert_eq!(
+        loaded[0].local_path.as_deref(),
+        Some("C:/Users/test/Downloads/video.mp4")
+    );
 }
 #[tokio::test]
 async fn cyclic_pagination_is_rejected() {
@@ -404,6 +425,7 @@ async fn queue_rejects_insecure_url_and_persists_failure_without_secrets() {
         completed: 0,
         total: None,
         phase: TransferPhase::Queued,
+        local_path: None,
     };
     let _ = center
         .run(
@@ -481,6 +503,7 @@ async fn sign_out_cancels_download_before_worker_registration() {
         completed: 0,
         total: Some(42),
         phase: TransferPhase::Queued,
+        local_path: None,
     };
     let _ = center
         .run_cancellable(

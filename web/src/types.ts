@@ -59,6 +59,7 @@ export interface Transfer {
   completed: number
   total: number | null
   phase: 'Queued' | 'Running' | 'Interrupted' | 'Completed' | 'Cancelled' | 'Failed'
+  local_path?: string | null
 }
 export interface Transfers {
   records: Transfer[]

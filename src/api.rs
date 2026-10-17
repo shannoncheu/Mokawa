@@ -453,6 +453,18 @@ impl Api {
         Ok(url.to_string())
     }
 
+    /// Resolve a playback rendition separately from the original FETCH URL
+    /// used for local downloads.
+    pub async fn file_playback_link(&self, session: &Session, id: &str) -> Result<String> {
+        let file = self.playback_details(session, id).await?;
+        let raw_url = file.preferred_playback_link()?;
+        let url = reqwest::Url::parse(raw_url).map_err(|_| Error::Protocol)?;
+        if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
+            return Err(Error::Protocol);
+        }
+        Ok(url.to_string())
+    }
+
     /// Read only a small text preview from PikPak's signed content URL.
     pub async fn text_preview(&self, session: &Session, id: &str) -> Result<String> {
         const MAX_PREVIEW: usize = 512 * 1024;
@@ -838,6 +850,31 @@ mod pikpak_collection_api_tests {
         assert_eq!(
             api.file_content_link(&pat(), "video1").await.unwrap(),
             "https://cdn.invalid/original"
+        );
+    }
+
+    #[tokio::test]
+    async fn video_playback_uses_cache_rendition_while_download_uses_fetch_original() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/drive/v1/files/video-playback"))
+            .and(query_param("usage", "CACHE"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name":"转码.mp4","size":"1000","web_content_link":"https://cdn.invalid/original-download",
+                "medias":[
+                    {"media_name":"720P","is_origin":false,"is_visible":true,"link":{"url":"https://cdn.invalid/h264-720p"}},
+                    {"media_name":"Original","is_origin":true,"is_visible":true,"link":{"url":"https://cdn.invalid/hevc-original"}}
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = Api::for_mock(&server.uri()).unwrap();
+        assert_eq!(
+            api.file_playback_link(&pat(), "video-playback")
+                .await
+                .unwrap(),
+            "https://cdn.invalid/h264-720p"
         );
     }
 

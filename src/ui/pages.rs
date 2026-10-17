@@ -385,6 +385,7 @@ impl Mokawa {
                             completed: 0,
                             total: Some(details.size),
                             phase: TransferPhase::Queued,
+                            local_path: None,
                         };
                         drop(preparation);
                         center

@@ -161,7 +161,7 @@ it('切换目录期间不显示或操作上个目录的文件', async () => {
   expect(wrapper.text()).toContain('这里还没有文件')
   wrapper.unmount()
 })
-it('未连接时仍可进入本机最近记录和下载记录，任务筛选维度互相独立', async () => {
+it('未连接时仍可查看本地下载，状态筛选互斥且不显示云端任务', async () => {
   transport.call.mockImplementation(async (command: string) => {
     if (command === 'bootstrap')
       return {
@@ -182,22 +182,131 @@ it('未连接时仍可进入本机最近记录和下载记录，任务筛选维�
   expect(wrapper.find('.content-panel h1').text()).toBe('最近访问')
   await wrapper
     .findAll('.sidebar nav button')
-    .find((button) => button.text().includes('任务中心'))!
+    .find((button) => button.text().trim() === '下载')!
     .trigger('click')
+  await flushPromises()
+  expect(wrapper.find('.content-panel h1').text()).toBe('下载')
   const groups = wrapper.findAll('.task-filter-group')
-  expect(groups).toHaveLength(2)
+  expect(groups).toHaveLength(1)
   expect(groups[0].findAll('button.active')).toHaveLength(1)
-  expect(groups[1].findAll('button.active')).toHaveLength(1)
   await groups[0]
     .findAll('button')
     .find((button) => button.text().includes('失败'))!
     .trigger('click')
-  await groups[1]
-    .findAll('button')
-    .find((button) => button.text().includes('云端离线'))!
-    .trigger('click')
   expect(wrapper.findAll('.task-filter-group')[0].findAll('button.active')).toHaveLength(1)
-  expect(wrapper.findAll('.task-filter-group')[1].findAll('button.active')).toHaveLength(1)
-  expect(wrapper.text()).toContain('连接 PikPak 后查看云端任务')
+  expect(wrapper.text()).not.toContain('云端离线')
+  expect(wrapper.text()).not.toContain('连接 PikPak 后查看云端任务')
+  wrapper.unmount()
+})
+it('完成下载从本机任务记录打开文件或所在目录', async () => {
+  transport.call.mockImplementation(async (command: string) => {
+    if (command === 'bootstrap')
+      return {
+        appearance: { settings: defaults(), avatar: null, background: null, warnings: [] },
+        hasSession: false,
+        canClearSession: false,
+        authMethod: null,
+        warning: null,
+      }
+    if (command === 'transfer_snapshot')
+      return {
+        records: [
+          {
+            id: 'task-a',
+            file_id: 'file-a',
+            file_name: '完成.mp4',
+            completed: 100,
+            total: 100,
+            phase: 'Completed',
+            local_path: 'C:/Downloads/完成.mp4',
+          },
+        ],
+        errors: {},
+        speeds: {},
+        persistence_error: null,
+      }
+    if (command === 'cancel_page' || command === 'cancel_preview') return undefined
+    if (command === 'open_transfer_location') return undefined
+    throw { code: 'no_session', message: '没有保存的账号' }
+  })
+  const wrapper = mount(App, { attachTo: document.body })
+  await flushPromises()
+  await wrapper.findAll('.local-history-links button')[1].trigger('click')
+  await flushPromises()
+  await wrapper.find('[aria-label="打开下载文件"]').trigger('click')
+  await wrapper.find('[aria-label="打开所在文件夹"]').trigger('click')
+  expect(transport.call).toHaveBeenCalledWith('open_transfer_location', {
+    id: 'task-a',
+    revealFile: true,
+  })
+  expect(transport.call).toHaveBeenCalledWith('open_transfer_location', {
+    id: 'task-a',
+    revealFile: false,
+  })
+  wrapper.unmount()
+})
+it('视频详情调用专用媒体链接解析器，关闭侧栏时取消预览', async () => {
+  transport.call.mockImplementation(async (command: string) => {
+    if (command === 'bootstrap')
+      return {
+        appearance: { settings: defaults(), avatar: null, background: null, warnings: [] },
+        hasSession: true,
+        canClearSession: true,
+        authMethod: 'personal_access_token',
+        warning: null,
+      }
+    if (command === 'transfer_snapshot')
+      return { records: [], errors: {}, speeds: {}, persistence_error: null }
+    if (command === 'list_files')
+      return [
+        {
+          id: 'video-a',
+          name: '转码视频.mp4',
+          kind: 'drive#file',
+          size: 1024,
+          mime_type: 'video/mp4',
+          modified_time: '',
+        },
+      ]
+    if (command === 'preview_content_link') return 'https://media.example.test/720p.mp4'
+    if (command === 'cancel_page' || command === 'cancel_preview') return undefined
+  })
+  const wrapper = mount(App, { attachTo: document.body })
+  await flushPromises()
+  await wrapper.find('.file-item').trigger('click')
+  await flushPromises()
+  expect(transport.call).toHaveBeenCalledWith('preview_content_link', {
+    id: 'video-a',
+    generation: expect.any(Number),
+  })
+  expect(wrapper.find('video').attributes('src')).toBe('https://media.example.test/720p.mp4')
+  await wrapper.find('[aria-label="关闭文件详情"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.find('video').exists()).toBe(false)
+  expect(transport.call.mock.calls.some((args) => args[0] === 'cancel_preview')).toBe(true)
+  wrapper.unmount()
+})
+it('不会收集或提交不受支持的用户名密码登录', async () => {
+  const original = transport.call.getMockImplementation()!
+  transport.call.mockImplementation(async (command: string, ...args: unknown[]) => {
+    if (command === 'bootstrap')
+      return {
+        appearance: { settings: defaults(), avatar: null, background: null, warnings: [] },
+        hasSession: false,
+        canClearSession: false,
+        authMethod: null,
+        warning: null,
+      }
+    return original(command, ...args)
+  })
+  const wrapper = mount(App, { attachTo: document.body })
+  await flushPromises()
+  const passwordOption = wrapper
+    .findAll('button')
+    .find((button) => button.text().includes('用户名/邮箱与密码登录'))!
+  expect(passwordOption.attributes('disabled')).toBeDefined()
+  expect(wrapper.text()).toContain('官方 CLI 已说明密码登录不再支持')
+  expect(wrapper.findAll('input[type="password"]')).toHaveLength(1)
+  expect(wrapper.find('input[type="password"]').attributes('id')).toBe('personal-access-token')
   wrapper.unmount()
 })
