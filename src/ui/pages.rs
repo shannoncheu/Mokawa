@@ -223,7 +223,7 @@ impl Mokawa {
             .overflow_y_scroll();
         body = match self.page {
             Page::Login => body.items_center().justify_start()
-                .child(div().w_full().max_w(px(480.)).flex_shrink_0().p_6().rounded_xl().bg(rgb(0x191c28)).flex().flex_col().gap_4()
+                .child(div().w_full().max_w(px(480.)).min_h(px(540. + if self.busy || self.has_saved_session { 56. } else { 0. })).flex_shrink_0().p_6().rounded_xl().bg(rgb(0x191c28)).flex().flex_col().gap_4()
                     .child(div().text_color(rgb(0x949ce5)).text_3xl().child("Mokawa"))
                     .child(div().text_2xl().child("连接 PikPak 账号"))
                     .child(div().text_sm().text_color(rgb(0xaab3ce)).child("使用 PikPak 官方授权连接网盘，凭据仅保存在 Windows 凭据管理器中。"))

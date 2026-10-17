@@ -293,7 +293,14 @@ impl Mokawa {
                             .bg(rgb(if highlighted { 0x30374f } else { 0x191c28 }))
                             .hover(|s| s.bg(rgb(0x292f42)))
                             .child(if folder { "▣" } else { "▤" })
-                            .child(div().flex_1().min_w_0().truncate().child(file.name.clone()))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .when(!this.grid, |label| label.flex_1())
+                                    .when(this.grid, |label| label.w_full().h(px(42.)))
+                                    .child(file.name.clone()),
+                            )
                             .child(div().text_sm().text_color(rgb(0xa3acc3)).child(if folder {
                                 "文件夹".into()
                             } else {
@@ -309,7 +316,13 @@ impl Mokawa {
                                 )
                             })
                             .when(this.grid, |row| {
-                                row.flex_col().items_start().h(px(148.)).m_1()
+                                row.flex_col()
+                                    .items_start()
+                                    .h(px(148.))
+                                    .m_1()
+                                    .border_1()
+                                    .border_color(rgb(0x30374f))
+                                    .bg(rgb(if highlighted { 0x30374f } else { 0x202331 }))
                             })
                             .flex_1()
                             .min_w_0()
@@ -494,17 +507,19 @@ impl Mokawa {
             .child(toolbar)
             .child(crumbs)
             .child(operations)
-            .child(
-                div()
-                    .flex()
-                    .px_4()
-                    .py_2()
-                    .text_sm()
-                    .text_color(rgb(0xaab3ce))
-                    .child(div().flex_1().child("名称"))
-                    .child(div().w(px(130.)).child("大小"))
-                    .child(div().w(px(185.)).child("修改时间")),
-            );
+            .when(!self.grid, |center| {
+                center.child(
+                    div()
+                        .flex()
+                        .px_4()
+                        .py_2()
+                        .text_sm()
+                        .text_color(rgb(0xaab3ce))
+                        .child(div().flex_1().child("名称"))
+                        .child(div().w(px(130.)).child("大小"))
+                        .child(div().w(px(185.)).child("修改时间")),
+                )
+            });
         if let Some(ids) = &self.pending_delete {
             center = center.child(
                 div()
