@@ -318,20 +318,22 @@ async fn oversized_history_is_rejected_before_json_decode() {
 
 #[test]
 fn large_file_list_indexes_preserve_filtering_and_folder_order() {
-    let mut browser = mokawa::state::BrowserState::default();
-    browser.files = (0..100_000)
-        .map(|index| mokawa::models::File {
-            id: index.to_string(),
-            name: format!("File {index:06}"),
-            kind: if index % 2 == 0 {
-                "drive#folder"
-            } else {
-                "drive#file"
-            }
-            .into(),
-            ..Default::default()
-        })
-        .collect();
+    let browser = mokawa::state::BrowserState {
+        files: (0..100_000)
+            .map(|index| mokawa::models::File {
+                id: index.to_string(),
+                name: format!("File {index:06}"),
+                kind: if index % 2 == 0 {
+                    "drive#folder"
+                } else {
+                    "drive#file"
+                }
+                .into(),
+                ..Default::default()
+            })
+            .collect(),
+        ..Default::default()
+    };
     let start = std::time::Instant::now();
     let indices = browser.visible_indices("File 099", true);
     eprintln!("100000-file filter/sort: {:?}", start.elapsed());
