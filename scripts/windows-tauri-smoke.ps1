@@ -13,6 +13,10 @@ function Wait-Child($child,[int]$milliseconds,[string]$name) {
 }
 $installer = Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe | Select-Object -First 1
 if (!$installer) { throw 'Tauri installer missing' }
+$portable = 'src-tauri/target/x86_64-pc-windows-msvc/release/mokawa.exe'
+if (!(Test-Path $portable)) { throw 'Tauri portable executable missing' }
+Set-Stage 'portable-executable-window-controls'
+./scripts/windows-tauri-controls.ps1 -Executable $portable
 $root = "$env:LOCALAPPDATA\Programs\Mokawa-Vue-Test"
 Set-Stage 'install'
 $setup = Start-Process $installer.FullName -ArgumentList '/S',"/D=$root" -PassThru
