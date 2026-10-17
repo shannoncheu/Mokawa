@@ -2,6 +2,8 @@
 
 调查日期：2026-10-16。**没有提供真实账号或 Mokawa 获授权的客户端注册，因此全部真实 API 均未实测。** Mock 通过只验证 Mokawa 请求、模型和错误路径，不证明线上服务可用。
 
+本轮离线 API 交叉研究源：Bengerthelorf/pikpaktui `81d7621`（Apache-2.0，`src/pikpak/offline.rs`）、OpenListTeam/OpenList `3b28270`（AGPL-3.0，`drivers/pikpak/driver.go` 与 `types.go`）、rclone/rclone `4c52ae0`（MIT，`backend/pikpak/pikpak.go`）、lnzx/pikpak `3911b13`（MIT，`internal/pikpak/task.go`）。仅核对公开端点与字段，不复制其代码、密钥或身份材料；OpenList 的 AGPL 代码没有复制或链接进 Mokawa。
+
 参考源：
 
 - A：https://github.com/lnzx/pikpak/tree/3911b1363705561d96b2fb06583a0054f2947369 ，MIT。
@@ -18,7 +20,7 @@
 | 验证码 | 已从代码确认但尚未实测 | `/v1/shield/captcha/init`；可能返回验证 URL | 返回挑战即中止；不复制签名逻辑 |
 | 退出/撤销/重新认证 | 尚未确认 | 本地会话清理不等于服务端撤销 | 本地凭据移除，401 提示重登 |
 | 用户/会员 | 已从代码确认但尚未实测 | B types.go 描述 `/drive/v1/privilege/vip`；用户信息契约尚待确认 | 未实现 |
-| 空间 | 已从代码确认但尚未实测 | A Quota、B GetAbout；GET `/drive/v1/about` | 未实现 |
+| 空间 | 已从代码确认但尚未实测 | A Quota、B GetAbout；GET `/drive/v1/about`，`quota.limit`/`quota.usage` 为字节数（数字或数字字符串） | 已接入 Rust 与侧栏；Mock 验证，真实账号/权限未验证 |
 | 文件列表/导航 | 已从代码确认但尚未实测 | GET `/drive/v1/files`，parent_id/filters/page_token | 分页与循环保护 Mock；UI 已接入 |
 | 搜索/排序/过滤 | 尚未确认 | 服务端语义未核实 | 当前目录本地搜索和名称排序 |
 | 新建目录 | 已从代码确认但尚未实测 | POST `/drive/v1/files`，kind=drive#folder | API/UI 接入，线上待测 |
@@ -30,12 +32,14 @@
 | 上传 | 尚未确认 | 本地文件上传初始化、分片、存储授权完整链路未核实 | 未实现；不把 URL 离线任务当上传 |
 | 下载链接 | 已从代码确认但尚未实测 | GET `/drive/v1/files/{id}?usage=FETCH`，web_content_link | 详情模型与 API；下载 UI 已接入，真实链路待测 |
 | Range/续传 | 尚未确认 | 必须对真实下载 CDN 验证 206、Content-Range、ETag | 未启用暂停和续传 |
-| 离线创建 | 已从代码确认但尚未实测 | B OfflineDownload；POST files，upload_type=UPLOAD_TYPE_URL | 未实现 |
-| 离线查询/取消/重试 | 已从代码确认但尚未实测 | B OfflineList/Delete/Retry；tasks 与单数 task 契约不一致需验证 | 未实现 |
+| 云端离线创建 | 已从多个公开源码确认但尚未实测 | POST `/drive/v1/files`，`upload_type=UPLOAD_TYPE_URL`，`url.url`；`folder_type=DOWNLOAD` 表示默认离线目录，指定 `parent_id` 时 `folder_type=""` | 已接入 Rust 与界面；真实权限/成功响应待验证 |
+| Magnet/HTTP/HTTPS 来源 | 已从代码确认但尚未实测 | API 接收 URL 字符串；输入限制 HTTP(S) 与含 BTIH 的 Magnet，拒绝本机/凭据地址 | 已实现；服务端对各种来源的实际兼容范围未验证 |
+| `.torrent` 导入 | Mokawa 本地实现，云端仍待实测 | 本机有界解析 Bencode `info` 并生成 BTIH Magnet，不上传种子文件；仅支持含 v1 info hash 的种子 | 已实现本地解析与单测；云端接收生成 Magnet 未实测 |
+| 离线查询/删除/重试 | 查询/删除/重试已从多个公开源码确认但尚未实测 | GET `/drive/v1/tasks`（`type=offline`、分页与 phase filter）；DELETE `/drive/v1/tasks?task_ids=…&delete_files=false`；失败任务 POST `/drive/v1/task` RETRY。删除只移除任务记录并保留完成文件 | 已接入；暂停能力未确认；重试前重新读取阶段 |
 | 分享创建/访问/管理/提取码 | 尚未确认 | 参考中未确认完整可依赖生命周期 | 未实现 |
 | 回收站列表/永久删除/清空 | 已从代码确认但尚未实测 | filters.trashed、files:batchDelete、PATCH files/trash:empty | 未接入；没有开放永久删除 |
 | 恢复 | 尚未确认 | 恢复契约需进一步验证 | 未实现 |
-| 图片/视频/音频/字幕 | 尚未确认 | 链接字段并不证明可播放、编解码/授权/字幕支持 | 未实现 |
+| 图片/视频/音频/文本预览 | 尚未确认 | 文件详情 `usage=FETCH` 提供 `web_content_link`；公开资料未确认 Range、播放权限、CDN CORS/编解码。无 `PLAY` 端点证据 | 图片/音视频走 WebView2 原生元素、Range 由 WebView2 请求；纯文本 Rust 读取上限 512 KiB。无真实媒体账号验证；字幕未实现 |
 | 限流/错误码 | 尚未确认 | 401/403/429 和 JSON error_code 需线上进一步确认 | 标准 HTTP 分支 Mock；无自动无限重试 |
 
 ## 请求与响应

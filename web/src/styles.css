@@ -202,8 +202,8 @@ button svg {
   align-items: center;
   position: relative;
   z-index: 5;
-  background: rgba(var(--surface-rgb), 0.96);
-  border-bottom: 1px solid var(--line);
+  background: var(--solid);
+  border-bottom: 0;
   user-select: none;
 }
 .titlebar-drag {
@@ -272,7 +272,15 @@ button svg {
   gap: 12px;
   height: calc(100% - 48px);
   min-height: 0;
-  padding: 12px;
+  /* Join the workspace to the custom titlebar; the old 12px top gutter
+     exposed the blurred personalization layer as an unintended strip. */
+  padding: 0 12px 12px;
+}
+.workspace > .content-panel,
+.workspace > .detail-panel {
+  border-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 .sidebar {
   overflow: auto;
@@ -281,7 +289,8 @@ button svg {
   display: flex;
   flex-direction: column;
   padding: 14px 10px 10px;
-  border-radius: 14px;
+  border-top: 0;
+  border-radius: 0 14px 14px 14px;
   background: var(--sidebar-surface);
   box-shadow: none;
 }
@@ -415,7 +424,8 @@ button svg {
   display: flex;
   flex-direction: column;
   padding: 0 28px;
-  border-radius: 14px;
+  border-top: 0;
+  border-radius: 0 14px 14px 14px;
 }
 .files-topbar {
   display: flex;
@@ -699,6 +709,75 @@ button svg {
   padding: 20px;
   overflow: auto;
 }
+.detail-preview {
+  overflow: hidden;
+  min-width: 0;
+}
+.detail-preview img,
+.detail-preview video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #090a0d;
+}
+.detail-preview audio {
+  width: calc(100% - 16px);
+}
+.text-preview {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  padding: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+  font:
+    11px/1.55 'Cascadia Mono',
+    Consolas,
+    monospace;
+  color: var(--text);
+}
+.preview-message {
+  max-width: 210px;
+  padding: 14px;
+  color: var(--muted-text);
+  font-size: 11px;
+  line-height: 1.7;
+  text-align: center;
+}
+.detail-panel dd time {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.quota-progress {
+  height: 4px;
+  width: 100%;
+  overflow: hidden;
+  background: var(--line);
+  border-radius: 10px;
+  margin-top: 6px;
+}
+.quota-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: inherit;
+}
+.quota-copy {
+  flex: 1;
+  min-width: 0;
+}
+.quota-refresh {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 3px;
+  border: 0;
+  background: transparent;
+}
+.quota-refresh:hover:not(:disabled) {
+  background: var(--hover);
+}
 .detail-heading {
   display: flex;
   align-items: center;
@@ -715,7 +794,8 @@ button svg {
   margin: 20px 0;
 }
 .detail-panel h3 {
-  word-break: break-all;
+  word-break: break-word;
+  overflow-wrap: anywhere;
   line-height: 1.7;
 }
 .detail-panel dl {
@@ -910,9 +990,24 @@ button svg {
   margin-left: auto;
 }
 .tasks-kind {
-  margin-left: auto;
+  margin-left: 4px;
+  padding: 6px 10px;
   color: var(--muted-text);
   font-size: 11px;
+  border-radius: 7px;
+  background: transparent;
+}
+.tasks-kind.active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.offline-create {
+  color: var(--accent-text);
 }
 .settings-shell {
   display: grid;
@@ -1576,8 +1671,21 @@ progress::-webkit-progress-value {
   color: var(--muted-text);
   font-size: 11px;
 }
-.modal label input {
+.modal label input,
+.modal label textarea,
+.modal label select {
   width: 100%;
+}
+.modal label textarea,
+.modal label select {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--text);
+  background: var(--input);
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
 }
 .modal p {
   font-size: 12px;
@@ -1647,7 +1755,7 @@ progress::-webkit-progress-value {
   }
   .workspace {
     gap: 9px;
-    padding: 9px;
+    padding: 0 9px 9px;
   }
   .files-page {
     padding-left: 20px;
@@ -1719,7 +1827,7 @@ progress::-webkit-progress-value {
   }
   .workspace {
     gap: 10px;
-    padding: 10px;
+    padding: 0 10px 10px;
   }
   .sidebar {
     width: 154px;

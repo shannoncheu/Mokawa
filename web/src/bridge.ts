@@ -22,7 +22,7 @@ export async function call<T>(command: string, args?: Record<string, unknown>): 
     localStorage.setItem('mokawa-preview-appearance', JSON.stringify(args?.settings))
     return undefined as T
   }
-  if (command === 'cancel_page') return undefined as T
+  if (command === 'cancel_page' || command === 'cancel_preview') return undefined as T
   if (command === 'transfer_snapshot')
     return { records: [], errors: {}, speeds: {}, persistence_error: null } as T
   throw {

@@ -30,8 +30,10 @@ import {
   LogOut,
   Monitor,
   HardDrive,
+  FileText,
   PanelLeftClose,
   PanelLeftOpen,
+  Link2,
 } from '@lucide/vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -45,6 +47,9 @@ import {
   type AppError,
   isFolder,
   formatBytes,
+  formatDate,
+  type DriveQuota,
+  type OfflineTask,
 } from './types'
 import AppearancePanel from './components/AppearancePanel.vue'
 import VirtualFiles from './components/VirtualFiles.vue'
@@ -70,6 +75,10 @@ const booting = ref(true)
 const status = ref('')
 const files = shallowRef<CloudFile[]>([])
 const selected = shallowRef(new Set<string>())
+const quota = ref<DriveQuota | null>(null)
+const quotaLoading = ref(false)
+const quotaError = ref(false)
+const quotaUpdatedAt = ref(0)
 const path = ref<{ id: string; name: string }[]>([])
 const query = ref('')
 const debouncedQuery = ref('')
@@ -84,13 +93,19 @@ const tasks = shallowRef<Transfers>({
   speeds: {},
   persistence_error: null,
 })
-const dialog = ref<'folder' | 'rename' | 'trash' | null>(null)
+const offlineTasks = shallowRef<OfflineTask[]>([])
+const offlineLoading = ref(false)
+const offlineSource = ref('')
+const offlineDestination = ref('')
+const taskKind = ref<'local' | 'cloud'>('local')
+const dialog = ref<'folder' | 'rename' | 'trash' | 'offline' | null>(null)
 const newName = ref('')
 const writing = ref(false)
 const nameInput = ref<HTMLInputElement>()
 let requestGeneration = Date.now()
 let disposed = false
 let queryTimer: ReturnType<typeof setTimeout> | undefined
+let offlineTimer: ReturnType<typeof setInterval> | undefined
 let resizedObserver: UnlistenFn | undefined
 let taskObserver: UnlistenFn | undefined
 let closeObserver: UnlistenFn | undefined
@@ -100,6 +115,18 @@ const maximized = ref(false)
 const sidebarCollapsed = ref(false)
 const settingsSection = ref('appearance')
 const taskFilter = ref<'all' | 'active' | 'completed' | 'failed'>('all')
+watch([page, taskKind], ([currentPage, kind]) => {
+  if (offlineTimer) clearInterval(offlineTimer)
+  offlineTimer = undefined
+  if (currentPage === 'offline' || (currentPage === 'tasks' && kind === 'cloud')) {
+    offlineTimer = setInterval(() => {
+      const active = offlineTasks.value.some((task) =>
+        ['PHASE_TYPE_RUNNING', 'PHASE_TYPE_PENDING'].includes(task.phase.toUpperCase()),
+      )
+      if (active) void refreshOffline()
+    }, 10_000)
+  }
+})
 const navigation = [
   { id: 'home', label: '首页', icon: Home },
   { id: 'files', label: '我的文件', icon: Folder },
@@ -130,6 +157,64 @@ const { visible, indexing } = useFileView(files, debouncedQuery, descending, not
 const currentFile = computed(() =>
   selected.value.size === 1 ? files.value.find((file) => selected.value.has(file.id)) : undefined,
 )
+const previewKind = computed(() => {
+  const file = currentFile.value
+  if (!file || isFolder(file)) return 'other'
+  const mime = file.mime_type.toLowerCase()
+  const ext = file.name.split('.').at(-1)?.toLowerCase() || ''
+  if (
+    mime.startsWith('image/') ||
+    ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif'].includes(ext)
+  )
+    return 'image'
+  if (mime.startsWith('video/') || ['mp4', 'webm', 'mov', 'm4v'].includes(ext)) return 'video'
+  if (mime.startsWith('audio/') || ['mp3', 'm4a', 'aac', 'ogg', 'wav', 'flac'].includes(ext))
+    return 'audio'
+  if (
+    mime.startsWith('text/') ||
+    ['txt', 'md', 'json', 'csv', 'log', 'yaml', 'yml', 'xml'].includes(ext)
+  )
+    return 'text'
+  return 'other'
+})
+const previewUrl = ref('')
+const textContent = ref('')
+const previewError = ref('')
+const previewLoading = ref(false)
+let previewGeneration = 0
+let mediaElement: HTMLMediaElement | undefined
+watch(
+  [detail, page, () => currentFile.value?.id, previewKind],
+  async ([open, currentPage, id, kind]) => {
+    const generation = ++previewGeneration
+    previewLoading.value = false
+    previewUrl.value = ''
+    textContent.value = ''
+    previewError.value = ''
+    if (mediaElement) {
+      mediaElement.pause()
+      mediaElement.removeAttribute('src')
+      mediaElement.load()
+      mediaElement = undefined
+    }
+    await call('cancel_preview', { generation }).catch(() => {})
+    if (generation !== previewGeneration) return
+    if (!open || currentPage !== 'files' || !id || kind === 'other') return
+    previewLoading.value = true
+    try {
+      if (kind === 'text')
+        textContent.value = await call<string>('text_preview', { id, generation })
+      else previewUrl.value = await call<string>('preview_content_link', { id, generation })
+    } catch (error) {
+      if (generation === previewGeneration) {
+        if ((error as AppError)?.code === 'authentication') report(error)
+        else previewError.value = errorMessage(error)
+      }
+    } finally {
+      if (generation === previewGeneration) previewLoading.value = false
+    }
+  },
+)
 const phases = {
   Queued: '排队中',
   Running: '下载中',
@@ -140,6 +225,7 @@ const phases = {
 }
 watch(query, (value) => {
   if (queryTimer) clearTimeout(queryTimer)
+  if (offlineTimer) clearInterval(offlineTimer)
   queryTimer = setTimeout(() => {
     debouncedQuery.value = value
   }, 160)
@@ -165,6 +251,7 @@ function route(id: string) {
   }
   page.value = id
   if (id === 'files' && !files.value.length) void load()
+  if (id === 'offline') void refreshOffline()
 }
 function select(file: CloudFile, multi: boolean) {
   const next = multi ? new Set(selected.value) : new Set<string>()
@@ -183,6 +270,8 @@ function report(error: unknown) {
   const message = errorMessage(error)
   if ((error as AppError)?.code === 'authentication') {
     authenticated.value = false
+    quota.value = null
+    quotaUpdatedAt.value = 0
     files.value = []
     selected.value = new Set()
     path.value = []
@@ -213,11 +302,41 @@ async function load() {
     authenticated.value = true
     page.value = 'files'
     status.value = `共 ${result.length.toLocaleString('zh-CN')} 项`
+    void loadQuota()
   } catch (error) {
     if (generation === requestGeneration && !disposed) report(error)
   } finally {
     if (generation === requestGeneration) busy.value = false
   }
+}
+async function loadQuota(force = false) {
+  if (!authenticated.value || quotaLoading.value) return
+  if (!force && Date.now() - quotaUpdatedAt.value < 5 * 60 * 1000 && quota.value) return
+  quotaLoading.value = true
+  quotaError.value = false
+  try {
+    quota.value = await call<DriveQuota>('storage_quota')
+    quotaUpdatedAt.value = Date.now()
+  } catch (error) {
+    quotaError.value = true
+    if ((error as AppError)?.code === 'authentication') report(error)
+  } finally {
+    quotaLoading.value = false
+  }
+}
+const quotaPercent = computed(() => {
+  const { usage, limit } = quota.value || {}
+  return usage != null && limit != null && limit > 0
+    ? Math.min(100, Math.max(0, (usage / limit) * 100))
+    : 0
+})
+function quotaLabel() {
+  if (!authenticated.value) return '连接账号后查看容量'
+  if (quotaLoading.value && !quota.value) return '正在读取容量…'
+  if (quotaError.value && !quota.value) return '容量暂时不可用'
+  if (quota?.value?.usage == null || quota.value.limit == null || quota.value.limit <= 0)
+    return '容量信息不可用'
+  return `${formatBytes(quota.value.usage)} / ${formatBytes(quota.value.limit)}`
 }
 function openFile(file: CloudFile) {
   if (isFolder(file)) {
@@ -228,6 +347,15 @@ function openFile(file: CloudFile) {
     select(file, false)
     detail.value = true
   }
+}
+function setMediaElement(element: unknown) {
+  if (element instanceof HTMLMediaElement) mediaElement = element
+}
+function retryPreview() {
+  detail.value = false
+  void nextTick(() => {
+    detail.value = true
+  })
 }
 function breadcrumb(index: number) {
   path.value = path.value.slice(0, index + 1)
@@ -270,6 +398,8 @@ async function signOut() {
     await call('sign_out')
     authenticated.value = false
     hasSavedSession.value = false
+    quota.value = null
+    quotaUpdatedAt.value = 0
     files.value = []
     path.value = []
     selected.value = new Set()
@@ -324,7 +454,18 @@ async function confirm() {
   if (writing.value) return
   writing.value = true
   try {
-    if (dialog.value === 'folder')
+    if (dialog.value === 'offline') {
+      await call('create_offline_task', {
+        source: offlineSource.value.trim(),
+        parentId: offlineDestination.value,
+      })
+      offlineSource.value = ''
+      dialog.value = null
+      page.value = 'offline'
+      await refreshOffline()
+      notify('已向 PikPak 提交离线任务。')
+      return
+    } else if (dialog.value === 'folder')
       await call('create_folder', { parent: path.value.at(-1)?.id || '', name: newName.value })
     else if (dialog.value === 'rename')
       await call('rename_file', { id: currentFile.value?.id, name: newName.value })
@@ -339,16 +480,90 @@ async function confirm() {
 }
 async function download() {
   menu.value = null
-  if (!currentFile.value || isFolder(currentFile.value)) {
-    notify('请选择一个文件下载。')
+  const ids = [...selected.value].filter((id) => {
+    const file = files.value.find((item) => item.id === id)
+    return file && !isFolder(file)
+  })
+  if (!ids.length) {
+    notify('请选择至少一个文件下载。')
     return
   }
   try {
-    const task = await call<string | null>('start_download', { id: currentFile.value.id })
+    const task = await call<string | null>('start_download_batch', { ids })
     if (task) {
       page.value = 'tasks'
       notify('已加入下载队列。')
     }
+  } catch (error) {
+    report(error)
+  }
+}
+async function refreshOffline() {
+  if (!authenticated.value || offlineLoading.value) return
+  offlineLoading.value = true
+  try {
+    offlineTasks.value = await call<OfflineTask[]>('offline_tasks')
+  } catch (error) {
+    report(error)
+  } finally {
+    offlineLoading.value = false
+  }
+}
+function newOfflineTask() {
+  offlineDestination.value = path.value.at(-1)?.id || ''
+  offlineSource.value = ''
+  dialog.value = 'offline'
+  void nextTick(() => modal.value?.querySelector<HTMLInputElement>('input')?.focus())
+}
+function selectTaskKind(kind: 'local' | 'cloud') {
+  taskKind.value = kind
+  if (kind === 'cloud') void refreshOffline()
+}
+async function importTorrent() {
+  try {
+    const magnet = await call<string | null>('choose_torrent')
+    if (magnet) offlineSource.value = magnet
+  } catch (error) {
+    report(error)
+  }
+}
+async function openOfflineResult(task: OfflineTask) {
+  if (!task.file_id) {
+    notify('PikPak 未返回完成文件 ID，请刷新任务或在“我的文件”中查看。')
+    return
+  }
+  try {
+    const result = await call<string | null>('start_download_batch', { ids: [task.file_id] })
+    if (result) page.value = 'tasks'
+  } catch (error) {
+    report(error)
+  }
+}
+async function retryLocalDownload(fileId: string) {
+  try {
+    const result = await call<string | null>('start_download_batch', { ids: [fileId] })
+    if (result) notify('已重新加入下载队列。')
+  } catch (error) {
+    report(error)
+  }
+}
+function offlinePhaseLabel(phase: string) {
+  const labels: Record<string, string> = {
+    PHASE_TYPE_PENDING: '等待云端处理',
+    PHASE_TYPE_RUNNING: '云端下载中',
+    PHASE_TYPE_COMPLETE: '已完成',
+    PHASE_TYPE_ERROR: '失败',
+    PHASE_TYPE_PAUSED: '已暂停',
+    PHASE_TYPE_UNKNOW: '状态未知',
+  }
+  return labels[phase.toUpperCase()] || '状态未知'
+}
+async function removeOfflineTask(id: string) {
+  if (!window.confirm('删除这条 PikPak 离线任务记录？已完成的云端文件会保留。')) return
+  try {
+    await call('delete_offline_task', { id })
+    await refreshOffline()
+    notify('离线任务记录已删除，云端文件保留。')
   } catch (error) {
     report(error)
   }
@@ -461,6 +676,14 @@ onBeforeUnmount(() => {
   disposed = true
   personalAccessToken.value = ''
   requestGeneration++
+  previewGeneration++
+  void call('cancel_preview', { generation: previewGeneration }).catch(() => {})
+  if (mediaElement) {
+    mediaElement.pause()
+    mediaElement.removeAttribute('src')
+    mediaElement.load()
+    mediaElement = undefined
+  }
   window.removeEventListener('keydown', key)
   if (queryTimer) clearTimeout(queryTimer)
   if (noticeTimer) clearTimeout(noticeTimer)
@@ -562,9 +785,27 @@ function showMoveUnavailable() {
         </nav>
         <div class="sidebar-footer">
           <div class="quota">
-            <HardDrive :size="14" /><span>{{
-              authenticated ? '容量信息尚未接入' : '连接账号后查看容量'
-            }}</span>
+            <HardDrive :size="14" /><span class="quota-copy">
+              <span>{{ quotaLabel() }}</span>
+              <span
+                v-if="
+                  authenticated && quota?.usage != null && quota.limit != null && quota.limit > 0
+                "
+                class="quota-progress"
+                aria-label="容量使用比例"
+                ><span :style="{ width: `${quotaPercent}%` }"
+              /></span>
+            </span>
+            <button
+              v-if="authenticated"
+              class="quota-refresh"
+              aria-label="刷新容量信息"
+              title="刷新容量信息"
+              :disabled="quotaLoading"
+              @click="loadQuota(true)"
+            >
+              <RefreshCw :size="12" :class="{ spin: quotaLoading }" />
+            </button>
           </div>
           <button class="profile" @click.stop="accountMenu = !accountMenu">
             <span class="avatar"
@@ -718,6 +959,91 @@ function showMoveUnavailable() {
           </div>
         </div>
       </section>
+      <section v-else-if="page === 'offline'" class="content-panel panel tasks-page">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">PikPak 云端</p>
+            <h1>离线下载</h1>
+          </div>
+          <div class="toolbar-actions">
+            <button
+              class="icon-button"
+              :disabled="offlineLoading"
+              aria-label="刷新离线任务"
+              @click="refreshOffline"
+            >
+              <RefreshCw :size="16" :class="{ spin: offlineLoading }" /></button
+            ><button class="primary" @click="newOfflineTask">
+              <Plus :size="16" />新建离线任务
+            </button>
+          </div>
+        </div>
+        <p class="setting-note">
+          任务由 PikPak 云端处理。支持 Magnet、HTTP/HTTPS 链接和 .torrent 种子。
+        </p>
+        <div v-if="offlineLoading && !offlineTasks.length" class="empty-state">
+          <LoaderCircle class="spin" :size="26" />正在读取 PikPak 离线任务…
+        </div>
+        <div v-else-if="!offlineTasks.length" class="empty-state">
+          <Download :size="36" />
+          <h2>暂无云端离线任务</h2>
+          <p>提交链接后，PikPak 会在云端获取文件。</p>
+          <button class="primary" @click="newOfflineTask">新建离线任务</button>
+        </div>
+        <article v-for="task in offlineTasks" :key="task.id" class="transfer-row">
+          <div class="file-type-icon"><Download :size="21" /></div>
+          <div class="transfer-content">
+            <b>{{ task.file_name || task.name || 'PikPak 离线任务' }}</b>
+            <div class="transfer-meta">
+              <span>{{ offlinePhaseLabel(task.phase) }}</span
+              ><span v-if="task.file_size">{{ formatBytes(task.file_size) }}</span
+              ><span v-if="task.updated_time">{{ formatDate(task.updated_time) }}</span>
+            </div>
+            <progress
+              v-if="task.progress > 0 && task.progress <= 100"
+              :value="task.progress"
+              max="100"
+            />
+            <p v-if="task.message" class="error-text">{{ task.message }}</p>
+          </div>
+          <button
+            v-if="['PHASE_TYPE_ERROR', 'ERROR', 'FAILED'].includes(task.phase.toUpperCase())"
+            class="icon-button"
+            aria-label="重试任务"
+            title="重试"
+            @click="call('retry_offline_task', { id: task.id }).then(refreshOffline).catch(report)"
+          >
+            <RefreshCw :size="16" />
+          </button>
+          <button
+            v-if="
+              ['PHASE_TYPE_COMPLETE', 'COMPLETE', 'COMPLETED'].includes(task.phase.toUpperCase())
+            "
+            class="icon-button"
+            aria-label="下载完成文件"
+            title="下载完成文件"
+            @click="openOfflineResult(task)"
+          >
+            <Download :size="16" />
+          </button>
+          <button
+            class="icon-button danger-text"
+            aria-label="删除云端任务"
+            title="删除任务（保留已完成文件）"
+            @click="removeOfflineTask(task.id)"
+          >
+            <Trash2 :size="16" />
+          </button>
+        </article>
+        <button
+          v-if="authenticated"
+          class="text-button"
+          :disabled="offlineLoading"
+          @click="refreshOffline"
+        >
+          刷新任务状态
+        </button>
+      </section>
       <section v-else-if="page === 'tasks'" class="content-panel panel tasks-page">
         <div class="page-heading">
           <div>
@@ -738,38 +1064,88 @@ function showMoveUnavailable() {
             已完成</button
           ><button :class="{ active: taskFilter === 'failed' }" @click="taskFilter = 'failed'">
             失败</button
-          ><span class="tasks-kind">下载任务</span>
-        </div>
-        <div v-if="!filteredTasks.length" class="empty-state">
-          <Download :size="38" />
-          <h2>暂无下载任务</h2>
-          <p>登录后，选择文件并点击下载。</p>
-        </div>
-        <div v-if="tasks.persistence_error" class="error-box">{{ tasks.persistence_error }}</div>
-        <article v-for="task in filteredTasks" :key="task.id" class="transfer-row">
-          <div class="file-type-icon"><Download :size="22" /></div>
-          <div class="transfer-content">
-            <b>{{ task.file_name }}</b>
-            <div class="transfer-meta">
-              <span
-                >{{ formatBytes(task.completed)
-                }}<template v-if="task.total"> / {{ formatBytes(task.total) }}</template></span
-              ><span>{{ phases[task.phase] }}</span
-              ><span v-if="tasks.speeds[task.id]">{{ formatBytes(tasks.speeds[task.id]) }}/秒</span>
-            </div>
-            <progress v-if="task.total" :value="task.completed" :max="task.total" />
-            <p v-if="tasks.errors[task.id]" class="error-text">{{ tasks.errors[task.id] }}</p>
-          </div>
-          <button
-            v-if="['Queued', 'Running'].includes(task.phase)"
-            class="icon-button"
-            aria-label="取消下载"
-            @click="call('cancel_transfer', { id: task.id }).catch(report)"
+          ><button
+            class="tasks-kind"
+            :class="{ active: taskKind === 'local' }"
+            @click="selectTaskKind('local')"
           >
-            <X :size="17" /></button
-          ><Check v-else-if="task.phase === 'Completed'" class="success" :size="20" />
-        </article>
-        <p class="footnote">尚未验证暂停与续传能力。上传、离线下载尚未接入。</p>
+            本地下载</button
+          ><button
+            class="tasks-kind"
+            :class="{ active: taskKind === 'cloud' }"
+            @click="selectTaskKind('cloud')"
+          >
+            云端离线
+          </button>
+        </div>
+        <template v-if="taskKind === 'cloud'">
+          <div v-if="!offlineTasks.length" class="empty-state">
+            <Download :size="36" />
+            <h2>暂无云端离线任务</h2>
+            <button class="primary" @click="newOfflineTask">新建离线任务</button>
+          </div>
+          <article v-for="task in offlineTasks" :key="task.id" class="transfer-row">
+            <div class="file-type-icon"><Download :size="20" /></div>
+            <div class="transfer-content">
+              <b>{{ task.file_name || task.name || 'PikPak 离线任务' }}</b>
+              <div class="transfer-meta">
+                <span>{{ offlinePhaseLabel(task.phase) }}</span
+                ><span v-if="task.file_size">{{ formatBytes(task.file_size) }}</span>
+              </div>
+              <progress
+                v-if="task.progress > 0 && task.progress <= 100"
+                :value="task.progress"
+                max="100"
+              />
+              <p v-if="task.message" class="error-text">{{ task.message }}</p>
+            </div>
+            <button class="icon-button" aria-label="刷新离线任务" @click="refreshOffline">
+              <RefreshCw :size="16" />
+            </button>
+          </article>
+        </template>
+        <template v-else>
+          <div v-if="!filteredTasks.length" class="empty-state">
+            <Download :size="38" />
+            <h2>暂无下载任务</h2>
+            <p>登录后，选择文件并点击下载。</p>
+          </div>
+          <div v-if="tasks.persistence_error" class="error-box">{{ tasks.persistence_error }}</div>
+          <article v-for="task in filteredTasks" :key="task.id" class="transfer-row">
+            <div class="file-type-icon"><Download :size="22" /></div>
+            <div class="transfer-content">
+              <b>{{ task.file_name }}</b>
+              <div class="transfer-meta">
+                <span
+                  >{{ formatBytes(task.completed)
+                  }}<template v-if="task.total"> / {{ formatBytes(task.total) }}</template></span
+                ><span>{{ phases[task.phase] }}</span
+                ><span v-if="tasks.speeds[task.id]"
+                  >{{ formatBytes(tasks.speeds[task.id]) }}/秒</span
+                >
+              </div>
+              <progress v-if="task.total" :value="task.completed" :max="task.total" />
+              <p v-if="tasks.errors[task.id]" class="error-text">{{ tasks.errors[task.id] }}</p>
+            </div>
+            <button
+              v-if="['Queued', 'Running'].includes(task.phase)"
+              class="icon-button"
+              aria-label="取消下载"
+              @click="call('cancel_transfer', { id: task.id }).catch(report)"
+            >
+              <X :size="17" /></button
+            ><button
+              v-else-if="['Failed', 'Interrupted'].includes(task.phase) && task.file_id"
+              class="icon-button"
+              aria-label="重新下载"
+              title="重新下载"
+              @click="retryLocalDownload(task.file_id)"
+            >
+              <RefreshCw :size="16" /></button
+            ><Check v-else-if="task.phase === 'Completed'" class="success" :size="20" />
+          </article>
+          <p class="footnote">取消与失败重试可用；暂停和断点续传尚未通过真实 PikPak 链接验证。</p>
+        </template>
       </section>
       <section v-else-if="page === 'home'" class="content-panel panel home-page">
         <div class="home-topbar">
@@ -848,12 +1224,7 @@ function showMoveUnavailable() {
                 <Folder :size="18" /><span
                   ><b>{{ file.name }}</b
                   ><small
-                    >文件夹 ·
-                    {{
-                      file.modified_time
-                        ? new Date(file.modified_time).toLocaleDateString('zh-CN')
-                        : '—'
-                    }}</small
+                    >文件夹 · {{ file.modified_time ? formatDate(file.modified_time) : '—' }}</small
                   ></span
                 ><ChevronRight :size="15" />
               </button>
@@ -932,7 +1303,10 @@ function showMoveUnavailable() {
         <div class="file-toolbar">
           <button class="primary" :disabled="busy" @click="edit('folder')">
             <Plus :size="17" />新建文件夹</button
-          ><button @click="unavailable('上传')"><Upload :size="16" />上传文件</button>
+          ><button @click="unavailable('上传')"><Upload :size="16" />上传文件</button
+          ><button class="offline-create" @click="newOfflineTask">
+            <Link2 :size="16" />新建离线任务
+          </button>
           <div class="toolbar-spacer" />
           <button @click="descending = !descending">
             名称{{ descending ? '降序' : '升序' }}<ChevronDown :size="14" />
@@ -1006,18 +1380,77 @@ function showMoveUnavailable() {
             <X :size="18" />
           </button>
         </div>
-        <div class="detail-preview"><Folder :size="52" /></div>
-        <h3>{{ currentFile.name }}</h3>
+        <div class="detail-preview" :key="currentFile.id">
+          <LoaderCircle v-if="previewLoading" class="spin" :size="28" />
+          <img
+            v-else-if="previewKind === 'image' && previewUrl && !previewError"
+            :src="previewUrl"
+            :alt="currentFile.name"
+            referrerpolicy="no-referrer"
+            @error="previewError = '图片无法读取，链接可能已过期或文件格式不受支持。'"
+          />
+          <video
+            v-else-if="previewKind === 'video' && previewUrl && !previewError"
+            :ref="setMediaElement"
+            :src="previewUrl"
+            controls
+            playsinline
+            preload="metadata"
+            referrerpolicy="no-referrer"
+            @error="
+              previewError =
+                '视频无法播放，链接可能已过期或 WebView2 不支持该编码。可重试或下载文件。'
+            "
+          />
+          <audio
+            v-else-if="previewKind === 'audio' && previewUrl && !previewError"
+            :ref="setMediaElement"
+            :src="previewUrl"
+            controls
+            preload="metadata"
+            referrerpolicy="no-referrer"
+            @error="previewError = '音频无法播放，链接可能已过期或格式不受支持。可重试或下载文件。'"
+          />
+          <pre v-else-if="previewKind === 'text' && !previewError" class="text-preview">{{
+            textContent
+          }}</pre>
+          <div v-else-if="previewError" class="preview-message" role="status">
+            {{ previewError }}
+          </div>
+          <template v-else-if="previewKind === 'other'"
+            ><Folder v-if="isFolder(currentFile)" :size="42" /><FileText v-else :size="42"
+          /></template>
+          <div v-else class="preview-message">正在准备预览…</div>
+        </div>
+        <h3 :title="currentFile.name">{{ currentFile.name }}</h3>
         <dl>
           <dt>类型</dt>
-          <dd>{{ isFolder(currentFile) ? '文件夹' : currentFile.mime_type || '服务端未提供' }}</dd>
+          <dd>
+            {{
+              isFolder(currentFile)
+                ? '文件夹'
+                : currentFile.mime_type ||
+                  currentFile.name.split('.').at(-1)?.toUpperCase() ||
+                  '未知文件'
+            }}
+          </dd>
           <dt>大小</dt>
           <dd>{{ formatBytes(currentFile.size) }}</dd>
           <dt>修改时间</dt>
-          <dd>{{ currentFile.modified_time || '服务端未提供' }}</dd>
+          <dd>
+            <time :datetime="currentFile.modified_time">{{
+              currentFile.modified_time ? formatDate(currentFile.modified_time) : '服务端未提供'
+            }}</time>
+          </dd>
         </dl>
-        <button @click="download"><Download :size="16" />下载</button>
-        <p class="footnote">媒体预览尚未接入。</p>
+        <button v-if="!isFolder(currentFile)" @click="download"><Download :size="16" />下载</button>
+        <button v-if="previewError" class="text-button" @click="retryPreview">重试预览</button>
+        <p v-if="previewKind === 'other' && !isFolder(currentFile)" class="footnote">
+          此文件类型暂不支持预览，可下载到本机查看。
+        </p>
+        <p v-if="previewKind === 'text' && !previewError" class="footnote">
+          只读文本预览，最多读取 512 KB；内容由 PikPak 返回。
+        </p>
       </aside>
     </main>
     <div v-if="accountMenu" class="account-popover popup" @click.stop>
@@ -1054,7 +1487,15 @@ function showMoveUnavailable() {
       >
         <div class="detail-heading">
           <h2 id="modal-title">
-            {{ dialog === 'folder' ? '新建文件夹' : dialog === 'rename' ? '重命名' : '移入回收站' }}
+            {{
+              dialog === 'offline'
+                ? '新建 PikPak 离线任务'
+                : dialog === 'folder'
+                  ? '新建文件夹'
+                  : dialog === 'rename'
+                    ? '重命名'
+                    : '移入回收站'
+            }}
           </h2>
           <button
             type="button"
@@ -1066,7 +1507,37 @@ function showMoveUnavailable() {
             <X :size="17" />
           </button>
         </div>
-        <template v-if="dialog === 'trash'"
+        <template v-if="dialog === 'offline'">
+          <label
+            >Magnet 或 HTTP/HTTPS 链接<textarea
+              v-model="offlineSource"
+              required
+              maxlength="8192"
+              rows="3"
+              placeholder="粘贴 magnet:?xt=... 或 https://…"
+              :disabled="writing"
+            />
+          </label>
+          <button type="button" class="text-button" :disabled="writing" @click="importTorrent">
+            <Upload :size="15" />导入 .torrent 种子文件
+          </button>
+          <label
+            >云端保存目录<select v-model="offlineDestination" :disabled="writing">
+              <option value="">PikPak 离线下载目录</option>
+              <option v-if="path.length" :value="path.at(-1)?.id">
+                当前目录：{{ path.map((part) => part.name).join(' / ') }}
+              </option>
+              <option v-for="folder in files.filter(isFolder)" :key="folder.id" :value="folder.id">
+                {{ folder.name }}
+              </option>
+            </select></label
+          >
+          <p class="muted">
+            种子文件仅在本机解析 info hash，Mokawa 不会上传种子文件，也不运行 BT 引擎。最终处理由
+            PikPak 云端 API 完成。
+          </p>
+        </template>
+        <template v-else-if="dialog === 'trash'"
           ><p>确定将选中的 {{ selected.size }} 项移入 PikPak 回收站？</p>
           <p class="muted">操作将修改真实网盘文件，请确认选择无误。</p></template
         ><label v-else

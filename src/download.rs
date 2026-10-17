@@ -37,11 +37,9 @@ pub async fn download(
         return Err(Error::Invalid("下载地址必须使用 HTTPS"));
     }
     let directory = tokio::fs::canonicalize(directory).await?;
-    let destination = directory.join(name);
+    let name = available_name(&directory, name).await?;
+    let destination = directory.join(&name);
     let partial = directory.join(format!("{name}.mokawa.part"));
-    if tokio::fs::try_exists(&destination).await? {
-        return Err(Error::Invalid("目标文件已存在"));
-    }
     let (file, _cleanup) = create_partial(partial.clone()).await?;
     let mut file = tokio::fs::File::from_std(file);
     let result=async {
@@ -69,6 +67,35 @@ pub async fn download(
     }
     let _ = tokio::fs::remove_file(&partial).await;
     result
+}
+async fn available_name(directory: &Path, requested: &str) -> Result<String> {
+    if !name_occupied(directory, requested).await? {
+        return Ok(requested.to_owned());
+    }
+    let (stem, extension) = match requested.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() => (stem, format!(".{extension}")),
+        _ => (requested, String::new()),
+    };
+    for index in 1..=10_000 {
+        let suffix = format!(" ({index})");
+        let max_stem_bytes = 255usize.saturating_sub(extension.len() + suffix.len());
+        let mut end = stem.len().min(max_stem_bytes);
+        while !stem.is_char_boundary(end) {
+            end -= 1;
+        }
+        if end == 0 {
+            return Err(Error::Invalid("文件名称过长，无法处理同名冲突"));
+        }
+        let candidate = format!("{}{suffix}{extension}", &stem[..end]);
+        if !name_occupied(directory, &candidate).await? {
+            return Ok(candidate);
+        }
+    }
+    Err(Error::Invalid("同名文件过多，无法安全选择文件名"))
+}
+async fn name_occupied(directory: &Path, name: &str) -> Result<bool> {
+    Ok(tokio::fs::try_exists(directory.join(name)).await?
+        || tokio::fs::try_exists(directory.join(format!("{name}.mokawa.part"))).await?)
 }
 pub async fn save_queue(path: &Path, records: &[TransferRecord]) -> Result<()> {
     let bytes = serde_json::to_vec(records).map_err(|_| Error::Protocol)?;
@@ -129,6 +156,27 @@ impl Drop for PartialPath {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn name_conflicts_get_a_non_overwriting_suffix() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("report.pdf"), b"existing").unwrap();
+        std::fs::write(directory.path().join("report (1).pdf"), b"existing").unwrap();
+        std::fs::write(
+            directory.path().join("report (2).pdf.mokawa.part"),
+            b"partial",
+        )
+        .unwrap();
+        assert_eq!(
+            available_name(directory.path(), "report.pdf")
+                .await
+                .unwrap(),
+            "report (3).pdf"
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("report.pdf")).unwrap(),
+            b"existing"
+        );
+    }
     #[tokio::test]
     async fn abort_removes_owned_partial_file_without_deleting_conflicts() {
         let directory = tempfile::tempdir().unwrap();

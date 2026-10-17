@@ -6,7 +6,7 @@ use mokawa::{
     credentials,
     error::Error,
     files::ConfirmedDeletion,
-    models::{File, TransferPhase, TransferRecord},
+    models::{File, OfflineTask, TransferPhase, TransferRecord},
     personalization::Personalization,
     transfers::TransferCenter,
 };
@@ -50,6 +50,7 @@ struct Backend {
     store: store::Store,
     restored: tokio::sync::OnceCell<Option<String>>,
     page: Mutex<Option<(u64, CancellationToken)>>,
+    preview: Mutex<(u64, CancellationToken)>,
     downloads: Mutex<CancellationToken>,
     quit: CancellationToken,
     session_gate: tokio::sync::Mutex<()>,
@@ -104,8 +105,26 @@ impl Backend {
             token.cancel();
         }
     }
+    fn preview_scope(&self, generation: u64) -> mokawa::error::Result<CancellationToken> {
+        let mut preview = self.preview.lock().unwrap();
+        if generation < preview.0 {
+            return Err(Error::Cancelled);
+        }
+        preview.1.cancel();
+        let token = CancellationToken::new();
+        *preview = (generation, token.clone());
+        Ok(token)
+    }
+    fn cancel_preview(&self, generation: u64) {
+        let mut preview = self.preview.lock().unwrap();
+        if generation >= preview.0 {
+            preview.1.cancel();
+            *preview = (generation, CancellationToken::new());
+        }
+    }
     fn cancel_all(&self) {
         self.cancel_page();
+        self.preview.lock().unwrap().1.cancel();
         self.downloads.lock().unwrap().cancel();
         self.center.cancel_all();
     }
@@ -255,6 +274,59 @@ async fn list_files(
     Ok(files.into_iter().map(PublicFile::from).collect())
 }
 #[tauri::command]
+async fn storage_quota(state: State<'_, Shared>) -> Reply<mokawa::models::DriveQuota> {
+    let _slot = state
+        .files
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
+    let session = state.session().await?;
+    Ok(state
+        .api
+        .drive_about(&session)
+        .await?
+        .quota
+        .unwrap_or_default())
+}
+#[tauri::command]
+async fn preview_content_link(
+    state: State<'_, Shared>,
+    id: String,
+    generation: u64,
+) -> Reply<String> {
+    mokawa::files::validate_id(&id)?;
+    let _slot = state
+        .files
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
+    let session = state.session().await?;
+    let cancel = state.preview_scope(generation)?;
+    tokio::select! {
+        _ = cancel.cancelled() => Err(Error::Cancelled.into()),
+        result = state.api.file_content_link(&session, &id) => result.map_err(Into::into),
+    }
+}
+#[tauri::command]
+async fn text_preview(state: State<'_, Shared>, id: String, generation: u64) -> Reply<String> {
+    mokawa::files::validate_id(&id)?;
+    let _slot = state
+        .files
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
+    let session = state.session().await?;
+    let cancel = state.preview_scope(generation)?;
+    tokio::select! {
+        _ = cancel.cancelled() => Err(Error::Cancelled.into()),
+        result = state.api.text_preview(&session, &id) => result.map_err(Into::into),
+    }
+}
+#[tauri::command]
+fn cancel_preview(state: State<'_, Shared>, generation: u64) {
+    state.cancel_preview(generation);
+}
+#[tauri::command]
 async fn create_folder(
     state: State<'_, Shared>,
     parent: String,
@@ -305,11 +377,23 @@ async fn sign_out(state: State<'_, Shared>) -> Reply<()> {
 }
 #[tauri::command]
 async fn start_download(state: State<'_, Shared>, id: String) -> Reply<Option<String>> {
-    mokawa::files::validate_id(&id)?;
+    start_downloads(&state, vec![id]).await
+}
+async fn start_downloads(state: &Backend, ids: Vec<String>) -> Reply<Option<String>> {
+    if ids.is_empty() || ids.len() > 32 {
+        return Err(Error::Invalid("一次最多下载 32 个文件").into());
+    }
+    let mut unique = std::collections::HashSet::new();
+    for id in &ids {
+        mokawa::files::validate_id(id)?;
+        if !unique.insert(id) {
+            return Err(Error::Invalid("下载列表包含重复文件").into());
+        }
+    }
     let admission = state
         .admission
         .clone()
-        .try_acquire_owned()
+        .try_acquire_many_owned(ids.len() as u32)
         .map_err(|_| CommandError::from(Error::Invalid("下载队列已满")))?;
     let scope = state.downloads.lock().unwrap().child_token();
     let epoch = credentials::generation();
@@ -331,12 +415,28 @@ async fn start_download(state: State<'_, Shared>, id: String) -> Reply<Option<St
     };
     let _preparation = tokio::select! {_ = scope.cancelled()=>return Err(Error::Cancelled.into()),slot=state.preparation.clone().acquire_owned()=>slot.map_err(|_|CommandError::from(Error::Cancelled))?};
     let session = state.session().await?;
-    let file = tokio::select! {_ = scope.cancelled()=>return Err(Error::Cancelled.into()),file=state.api.file_details(&session,&id)=>file?};
-    if epoch != credentials::generation() || scope.is_cancelled() {
-        return Err(Error::Cancelled.into());
+    let mut items = Vec::with_capacity(ids.len());
+    for id in ids {
+        let file = tokio::select! {_ = scope.cancelled()=>return Err(Error::Cancelled.into()),file=state.api.file_details(&session,&id)=>file?};
+        if epoch != credentials::generation() || scope.is_cancelled() {
+            return Err(Error::Cancelled.into());
+        }
+        if file.web_content_link.is_empty() {
+            return Err(Error::Protocol.into());
+        }
+        items.push((id, file));
     }
-    if file.web_content_link.is_empty() {
-        return Err(Error::Protocol.into());
+    let required = items
+        .iter()
+        .try_fold(0u64, |sum, (_, f)| sum.checked_add(f.size))
+        .ok_or_else(|| CommandError::from(Error::Invalid("下载文件总大小超出范围")))?;
+    let check_dir = directory.clone();
+    let available = tauri::async_runtime::spawn_blocking(move || fs2::available_space(check_dir))
+        .await
+        .map_err(|_| CommandError::from(Error::Io))?
+        .map_err(|_| CommandError::from(Error::Io))?;
+    if required > available {
+        return Err(Error::Invalid("本地磁盘空间不足").into());
     }
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -347,22 +447,113 @@ async fn start_download(state: State<'_, Shared>, id: String) -> Reply<Option<St
         std::process::id(),
         state.next.fetch_add(1, Ordering::Relaxed)
     );
-    let record = TransferRecord {
-        id: task_id.clone(),
-        file_id: id,
-        file_name: file.name,
-        completed: 0,
-        total: Some(file.size),
-        phase: TransferPhase::Queued,
-    };
     let center = state.center.clone();
-    tauri::async_runtime::spawn(async move {
-        let _admission = admission;
-        let _ = center
-            .run_cancellable(record, file.web_content_link, directory, scope)
-            .await;
-    });
+    let admission = Arc::new(admission);
+    for (index, (id, file)) in items.into_iter().enumerate() {
+        let record = TransferRecord {
+            id: format!("{task_id}-{index}"),
+            file_id: id,
+            file_name: file.name,
+            completed: 0,
+            total: Some(file.size),
+            phase: TransferPhase::Queued,
+        };
+        let center = center.clone();
+        let directory = directory.clone();
+        let scope = scope.child_token();
+        let admission = admission.clone();
+        tauri::async_runtime::spawn(async move {
+            let _admission = admission;
+            let _ = center
+                .run_cancellable(record, file.web_content_link, directory, scope)
+                .await;
+        });
+    }
     Ok(Some(task_id))
+}
+#[tauri::command]
+async fn start_download_batch(state: State<'_, Shared>, ids: Vec<String>) -> Reply<Option<String>> {
+    start_downloads(&state, ids).await
+}
+#[tauri::command]
+async fn offline_tasks(state: State<'_, Shared>) -> Reply<Vec<OfflineTask>> {
+    let _slot = state
+        .files
+        .try_acquire()
+        .map_err(|_| CommandError::from(Error::Invalid("请求繁忙")))?;
+    let session = state.session().await?;
+    state.api.offline_tasks(&session).await.map_err(Into::into)
+}
+#[tauri::command]
+async fn create_offline_task(
+    state: State<'_, Shared>,
+    source: String,
+    parent_id: String,
+) -> Reply<OfflineTask> {
+    let _slot = state
+        .files
+        .try_acquire()
+        .map_err(|_| CommandError::from(Error::Invalid("请求繁忙")))?;
+    let session = state.session().await?;
+    state
+        .api
+        .create_offline_task(&session, &source, &parent_id)
+        .await
+        .map_err(Into::into)
+}
+#[tauri::command]
+async fn retry_offline_task(state: State<'_, Shared>, id: String) -> Reply<()> {
+    let _slot = state
+        .files
+        .try_acquire()
+        .map_err(|_| CommandError::from(Error::Invalid("请求繁忙")))?;
+    let session = state.session().await?;
+    state
+        .api
+        .retry_offline_task(&session, &id)
+        .await
+        .map_err(Into::into)
+}
+#[tauri::command]
+async fn delete_offline_task(state: State<'_, Shared>, id: String) -> Reply<()> {
+    let _slot = state
+        .files
+        .try_acquire()
+        .map_err(|_| CommandError::from(Error::Invalid("请求繁忙")))?;
+    let session = state.session().await?;
+    state
+        .api
+        .delete_offline_tasks(&session, &[id])
+        .await
+        .map_err(Into::into)
+}
+#[tauri::command]
+async fn choose_torrent(state: State<'_, Shared>) -> Reply<Option<String>> {
+    let _dialog = state
+        .dialogs
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| CommandError::from(Error::Invalid("请先完成当前选择")))?;
+    let path = tauri::async_runtime::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .add_filter("BitTorrent 种子", &["torrent"])
+            .pick_file()
+    })
+    .await
+    .map_err(|_| CommandError::from(Error::Io))?;
+    let Some(path) = path else { return Ok(None) };
+    tauri::async_runtime::spawn_blocking(move || {
+        let metadata = std::fs::metadata(&path)?;
+        if metadata.len() > 8 * 1024 * 1024 {
+            return Err(Error::Invalid("种子文件超过 8 MiB"));
+        }
+        let bytes = std::fs::read(path)?;
+        mokawa::torrent::magnet_from_torrent(&bytes)
+    })
+    .await
+    .map_err(|_| CommandError::from(Error::Io))?
+    .map(Some)
+    .map_err(Into::into)
 }
 #[tauri::command]
 async fn transfer_snapshot(state: State<'_, Shared>) -> Reply<mokawa::transfers::TransferSnapshot> {
@@ -387,6 +578,7 @@ pub fn run() {
         store: store::Store::new(),
         restored: tokio::sync::OnceCell::new(),
         page: Mutex::new(None),
+        preview: Mutex::new((0, CancellationToken::new())),
         downloads: Mutex::new(CancellationToken::new()),
         quit: CancellationToken::new(),
         session_gate: tokio::sync::Mutex::new(()),
@@ -402,7 +594,7 @@ pub fn run() {
             if let Some(window)=app.get_webview_window("main") { let _=window.unminimize();let _=window.show();let _=window.set_focus(); }
         }))
         .manage(backend.clone())
-        .invoke_handler(tauri::generate_handler![bootstrap,begin_authorization,connect_personal_access_token,open_auth_help,save_appearance,choose_image,remove_image,cancel_page,list_files,create_folder,rename_file,trash_files,sign_out,start_download,transfer_snapshot,cancel_transfer])
+        .invoke_handler(tauri::generate_handler![bootstrap,begin_authorization,connect_personal_access_token,open_auth_help,save_appearance,choose_image,remove_image,cancel_page,cancel_preview,list_files,storage_quota,preview_content_link,text_preview,create_folder,rename_file,trash_files,sign_out,start_download,start_download_batch,transfer_snapshot,cancel_transfer,offline_tasks,create_offline_task,retry_offline_task,delete_offline_task,choose_torrent])
         .setup(|app|{
             if let Some(window)=app.get_webview_window("main") && let Some(monitor)=window.current_monitor()? {
                 let area=monitor.work_area();let scale=monitor.scale_factor();

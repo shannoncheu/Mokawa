@@ -45,6 +45,16 @@ fn model_size_and_secret_redaction() {
     assert_eq!(restored.auth_method, AuthMethod::OAuth);
 }
 #[test]
+fn drive_quota_accepts_server_byte_counts_without_inference() {
+    use mokawa::models::DriveAbout;
+    let about: DriveAbout =
+        serde_json::from_str(r#"{"quota":{"limit":"1099511627776","usage":536870912}}"#).unwrap();
+    assert_eq!(about.quota.unwrap().limit, Some(1_099_511_627_776));
+    let unknown: DriveAbout = serde_json::from_str(r#"{"quota":{}}"#).unwrap();
+    assert_eq!(unknown.quota.unwrap().usage, None);
+    assert!(serde_json::from_str::<DriveAbout>(r#"{"quota":{"usage":-1}}"#).is_err());
+}
+#[test]
 fn deletion_requires_confirmation_and_valid_ids() {
     assert!(matches!(
         ConfirmedDeletion::confirm(vec!["a".into()], false),
@@ -84,6 +94,93 @@ async fn paginated_files_include_auth_and_filters() {
         .await
         .unwrap();
     assert_eq!(files.len(), 2);
+}
+
+#[tokio::test]
+async fn offline_submission_uses_pikpak_url_task_endpoint_and_cloud_destination() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/drive/v1/files"))
+        .and(header("authorization", "Bearer secret-access"))
+        .and(wiremock::matchers::body_json(serde_json::json!({
+            "kind":"drive#file", "upload_type":"UPLOAD_TYPE_URL",
+            "url":{"url":"magnet:?xt=urn:btih:0123456789012345678901234567890123456789"},
+            "parent_id":"folder", "folder_type":""
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "task":{"id":"task-1","phase":"PHASE_TYPE_PENDING"}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let task = Api::for_mock(&server.uri())
+        .unwrap()
+        .create_offline_task(
+            &session(),
+            "magnet:?xt=urn:btih:0123456789012345678901234567890123456789",
+            "folder",
+        )
+        .await
+        .unwrap();
+    assert_eq!(task.id, "task-1");
+}
+
+#[tokio::test]
+async fn offline_retry_checks_remote_phase_and_task_deletion_preserves_files() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/drive/v1/tasks/task-1"))
+        .and(query_param("type", "offline"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "task":{"id":"task-1","phase":"PHASE_TYPE_ERROR"}
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/drive/v1/task"))
+        .and(wiremock::matchers::body_json(serde_json::json!({
+            "type":"offline","create_type":"RETRY","id":"task-1"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/drive/v1/tasks"))
+        .and(query_param("task_ids", "task-1,task-2"))
+        .and(query_param("delete_files", "false"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let api = Api::for_mock(&server.uri()).unwrap();
+    api.retry_offline_task(&session(), "task-1").await.unwrap();
+    api.delete_offline_tasks(&session(), &["task-1".into(), "task-2".into()])
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn storage_quota_uses_authenticated_drive_about_endpoint() {
+    use mokawa::models::DriveAbout;
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/drive/v1/about"))
+        .and(header("authorization", "Bearer secret-access"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "quota": { "limit": "1000", "usage": "250" }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let about: DriveAbout = Api::for_mock(&server.uri())
+        .unwrap()
+        .drive_about(&session())
+        .await
+        .unwrap();
+    let quota = about.quota.unwrap();
+    assert_eq!(quota.limit, Some(1000));
+    assert_eq!(quota.usage, Some(250));
 }
 
 #[tokio::test]

@@ -9,7 +9,7 @@ on:
       release_tag:
         description: Pre-release tag
         required: true
-        default: v0.1.0-preview.3
+        default: v0.1.0-preview.4
         type: string
 permissions:
   actions: read
@@ -70,17 +70,17 @@ jobs:
             if (!$release.isDraft -or $release.targetCommitish -ne $env:SOURCE_SHA -or $release.assets.Count -ne 0) { throw 'Existing release draft does not match the verified build; refusing to overwrite it' }
           } else {
             $notes = @'
-          Mokawa 0.1.0 Preview 3 是面向 Windows 10/11 x64 的开发预览版，采用 Vue 3、Tauri 2 与 Rust。
+          Mokawa 0.1.0 Preview 4 是面向 Windows 10/11 x64 的开发预览版，采用 Vue 3、Tauri 2 与 Rust。
 
-          本版包含新的简体中文界面与浅/深主题、首页和文件管理布局、设置分类、任务中心筛选，以及 PikPak 个人访问令牌（PAT）连接入口。窗口拖动、双击最大化、最大化/还原、最小化和关闭均已在 Windows Runner 验收。
+          本版包含 PikPak 本地多文件流式下载、磁盘空间预检、同名文件自动避让，以及 PikPak 云端离线任务提交/查询/刷新/失败重试/删除记录。支持 Magnet、HTTP/HTTPS 链接和本地 `.torrent` 文件（仅解析 v1 BTIH 后提交给 PikPak 云端；不上传种子文件，不运行本地 BT 引擎）。
 
-          **认证限制：** Mokawa 尚无 PikPak 官方桌面 OAuth 客户端注册。PAT 会在本机输入，只有根目录 API 验证成功后才保存到 Windows 凭据管理器；当前没有可用于本次发布的真实 PikPak 账号验证结果，所以不能保证 PAT 对所有账号或文件操作有效。浏览器授权仍关闭。请勿把此预览版视为已验证可登录的正式客户端。
+          **认证与 API 限制：** 离线任务和下载端点来自公开客户端源码交叉确认，当前只有 Mock 验证，没有可用于本次发布的真实 PikPak 账号验收结果。PAT 对 REST API 的兼容性与账号权限仍需由用户自行验证。请将本版视为开发预览版。
 
-          **Windows 验证：** Windows 2022 CI 完成前端/Rust/Tauri 检查、MSVC x64 安装包构建、静默安装、WebView2 主题与个性化设置持久化、窗口控制/拖动验收和卸载。只发布 Windows x64 NSIS 安装器，不提供未经验证的便携版。
+          **Windows 验证：** Windows 2022 CI 将执行前端/Rust/Tauri 检查、MSVC x64 安装包构建、静默安装与卸载。只发布 Windows x64 NSIS 安装器；本版不包含经过独立验证的便携包。
 
-          安装器和应用**未进行代码签名**。下载后可使用 `SHA256SUMS.txt` 校验。此版本尚未接入上传、移动/复制、分享、离线下载、完整回收站和媒体播放；下载暂停/续传也未验证。
+          安装器和应用**未进行代码签名**。下载后可使用 `SHA256SUMS.txt` 校验。暂停/断点续传、上传、分享、完整回收站和媒体播放尚未接入或验证。PikPak 网络功能尚未通过真实账号端到端验收。
           '@
-            gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --target $env:SOURCE_SHA --title 'Mokawa 0.1.0 Preview 3' --notes $notes --draft --prerelease
+            gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --target $env:SOURCE_SHA --title 'Mokawa 0.1.0 Preview 4' --notes $notes --draft --prerelease
             if ($LASTEXITCODE -ne 0) { throw 'Could not create the pre-release draft' }
           }
           gh release upload $env:RELEASE_TAG dist/Mokawa-0.1.0-x64-setup.exe dist/SHA256SUMS.txt dist/dependency-licenses.json dist/frontend-licenses.json --repo $env:GITHUB_REPOSITORY

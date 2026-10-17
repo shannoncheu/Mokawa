@@ -46,6 +46,10 @@ export interface CloudFile {
   modified_time: string
   mime_type: string
 }
+export interface DriveQuota {
+  limit: number | null
+  usage: number | null
+}
 export interface Transfer {
   id: string
   file_id: string
@@ -59,6 +63,18 @@ export interface Transfers {
   errors: Record<string, string>
   speeds: Record<string, number>
   persistence_error: string | null
+}
+export interface OfflineTask {
+  id: string
+  file_id: string
+  file_name: string
+  name: string
+  phase: string
+  file_size: number | null
+  progress: number
+  message: string
+  created_time: string
+  updated_time: string
 }
 export interface AppError {
   code: string
@@ -75,5 +91,7 @@ export function formatBytes(size: number) {
 export function formatDate(value: string) {
   if (!value) return '—'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN')
+  if (Number.isNaN(date.getTime())) return value
+  const part = (number: number) => String(number).padStart(2, '0')
+  return `${date.getFullYear()}/${part(date.getMonth() + 1)}/${part(date.getDate())} ${part(date.getHours())}:${part(date.getMinutes())}`
 }
