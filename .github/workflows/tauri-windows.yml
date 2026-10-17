@@ -1,0 +1,54 @@
+name: Mokawa Vue Windows x64
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            src-tauri -> target
+          cache-on-failure: true
+      - name: Install frontend
+        run: npm ci
+      - name: Frontend tests and production build
+        run: |
+          npm test
+          npm run build
+      - name: Format
+        run: |
+          cargo fmt --check
+          cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - name: Rust core tests
+        run: cargo test --locked --all-targets
+      - name: Native bridge tests and lint
+        run: |
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
+          cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Build native Windows installer
+        run: npm run desktop:build -- --ci
+      - name: Install and verify native desktop
+        shell: pwsh
+        run: ./scripts/windows-tauri-smoke.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Mokawa-Vue-Windows-x64-unsigned
+          path: |
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/mokawa.exe
+            dist/tauri-*.json
+            dist/tauri-*.png
+            dist/tauri-*.csv

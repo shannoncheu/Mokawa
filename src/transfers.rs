@@ -16,7 +16,7 @@ pub const MAX_ACTIVE_TASKS: usize = 32;
 pub const MAX_HISTORY: usize = 200;
 use tokio_util::sync::CancellationToken;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize)]
 pub struct TransferSnapshot {
     pub records: Vec<TransferRecord>,
     pub errors: HashMap<String, String>,

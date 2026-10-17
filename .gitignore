@@ -3,3 +3,8 @@
 .env
 *.log
 /dist
+/node_modules
+/web-dist
+/src-tauri/target
+/test-results
+/playwright-report

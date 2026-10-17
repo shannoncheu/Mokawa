@@ -1,0 +1,65 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Mokawa",
+  "version": "0.1.0",
+  "identifier": "app.mokawa.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../web-dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Mokawa",
+        "width": 1180,
+        "height": 780,
+        "minWidth": 840,
+        "minHeight": 600,
+        "decorations": false,
+        "backgroundColor": "#f5f7fb"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' asset: http://asset.localhost blob: data:; connect-src ipc: http://ipc.localhost asset: http://asset.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$LOCALDATA/Mokawa/personalization/*"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "../resources/mokawa.ico"
+    ],
+    "publisher": "Mokawa",
+    "shortDescription": "PikPak 桌面客户端",
+    "resources": [
+      "../LICENSE",
+      "../THIRD_PARTY.md",
+      "../resources/NOTO-OFL.txt"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "languages": [
+          "SimpChinese"
+        ],
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    }
+  },
+  "mainBinaryName": "mokawa"
+}
