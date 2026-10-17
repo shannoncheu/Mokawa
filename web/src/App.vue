@@ -95,6 +95,7 @@ let resizedObserver: UnlistenFn | undefined
 let taskObserver: UnlistenFn | undefined
 let closeObserver: UnlistenFn | undefined
 let closeFlush: Promise<void> | undefined
+let titlebarPointer: { id: number; x: number; y: number } | undefined
 const maximized = ref(false)
 const sidebarCollapsed = ref(false)
 const settingsSection = ref('appearance')
@@ -367,6 +368,23 @@ async function windowAction(action: 'minimize' | 'toggleMaximize' | 'close') {
     notify(errorMessage(error))
   }
 }
+function titlebarPointerDown(event: PointerEvent) {
+  if (!desktop || event.button !== 0) return
+  titlebarPointer = { id: event.pointerId, x: event.clientX, y: event.clientY }
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+}
+function titlebarPointerMove(event: PointerEvent) {
+  const origin = titlebarPointer
+  if (!origin || origin.id !== event.pointerId) return
+  if (Math.hypot(event.clientX - origin.x, event.clientY - origin.y) < 5) return
+  titlebarPointer = undefined
+  void getCurrentWindow()
+    .startDragging()
+    .catch((error) => notify(errorMessage(error)))
+}
+function titlebarPointerEnd(event: PointerEvent) {
+  if (titlebarPointer?.id === event.pointerId) titlebarPointer = undefined
+}
 
 function key(event: KeyboardEvent) {
   if (event.key === 'Escape') {
@@ -482,7 +500,10 @@ function showMoveUnavailable() {
     <header class="titlebar">
       <div
         class="titlebar-drag"
-        data-tauri-drag-region="deep"
+        @pointerdown="titlebarPointerDown"
+        @pointermove="titlebarPointerMove"
+        @pointerup="titlebarPointerEnd"
+        @pointercancel="titlebarPointerEnd"
         @dblclick="windowAction('toggleMaximize')"
       >
         <i class="brand-mark">M</i><b>Mokawa</b>
