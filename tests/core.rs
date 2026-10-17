@@ -97,7 +97,7 @@ async fn expired_session_does_not_send_request() {
 }
 #[tokio::test]
 async fn errors_are_bounded_and_redacted() {
-    for (status, expected) in [(401, "expired"), (429, "rate limiting"), (500, "HTTP 500")] {
+    for (status, expected) in [(401, "过期"), (429, "频繁"), (500, "HTTP 500")] {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(status).set_body_string("secret-token"))
@@ -237,6 +237,7 @@ async fn preferences_round_trip_and_corruption_is_reported() {
     mokawa::settings::Preferences {
         compact_rows: true,
         hide_details: true,
+        ..Default::default()
     }
     .save(&path)
     .await
@@ -345,4 +346,29 @@ fn large_file_list_indexes_preserve_filtering_and_folder_order() {
             .all(|&i| !browser.files[i].is_folder())
     );
     assert_eq!(browser.files[indices[0]].name, "File 099998");
+}
+
+#[tokio::test]
+async fn theme_preferences_migrate_and_persist_all_modes() {
+    use mokawa::settings::{Preferences, ThemeMode};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("preferences.json");
+    std::fs::write(&path, r#"{"compact_rows":true,"hide_details":false}"#).unwrap();
+    let old = Preferences::load(&path).await.unwrap();
+    assert_eq!(old.theme, ThemeMode::System);
+    assert!(old.compact_rows);
+    for mode in [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark] {
+        Preferences {
+            theme: mode,
+            ..old.clone()
+        }
+        .save(&path)
+        .await
+        .unwrap();
+        assert_eq!(Preferences::load(&path).await.unwrap().theme, mode);
+    }
+    assert!(!ThemeMode::System.is_dark(false));
+    assert!(ThemeMode::System.is_dark(true));
+    assert!(!ThemeMode::Light.is_dark(true));
+    assert!(ThemeMode::Dark.is_dark(false));
 }

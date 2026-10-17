@@ -65,7 +65,7 @@ impl Api {
     ) -> Result<Session> {
         if username.trim().is_empty() || password.expose_secret().is_empty() || device_id.is_empty()
         {
-            return Err(Error::Invalid("login fields must not be empty"));
+            return Err(Error::Invalid("登录信息不能为空"));
         }
         let challenge: serde_json::Value = self.user_request("/v1/shield/captcha/init", &serde_json::json!({
             "client_id":registration.client_id,"device_id":device_id,"action":"POST:/v1/auth/signin","meta":{"username":username}

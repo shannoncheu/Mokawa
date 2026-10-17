@@ -18,6 +18,7 @@ pub fn init_logging() {
 pub struct Preferences {
     pub compact_rows: bool,
     pub hide_details: bool,
+    pub theme: ThemeMode,
 }
 impl Preferences {
     pub async fn load(path: &std::path::Path) -> crate::error::Result<Self> {
@@ -36,5 +37,23 @@ impl Preferences {
         tokio::fs::write(&temporary, data).await?;
         tokio::fs::rename(&temporary, path).await?;
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+impl ThemeMode {
+    pub fn is_dark(self, system_dark: bool) -> bool {
+        match self {
+            Self::System => system_dark,
+            Self::Light => false,
+            Self::Dark => true,
+        }
     }
 }

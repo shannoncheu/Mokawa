@@ -1,36 +1,34 @@
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("The session expired. Sign in again.")]
+    #[error("会话已过期，请重新登录。")]
     Unauthorized,
-    #[error("PikPak requires verification. Complete verification with PikPak and sign in again.")]
+    #[error("PikPak 要求安全验证，请在官方页面完成验证后重试。")]
     VerificationRequired,
-    #[error("PikPak is rate limiting requests. Retry later.")]
+    #[error("请求过于频繁，请稍后重试。")]
     RateLimited,
-    #[error("PikPak request failed (HTTP {0}).")]
+    #[error("PikPak 请求失败（HTTP {0}）。")]
     Http(u16),
-    #[error("PikPak rejected this operation.")]
+    #[error("PikPak 拒绝了此操作。")]
     Api,
-    #[error("Network request failed. Check connectivity and retry.")]
+    #[error("网络请求失败，请检查连接后重试。")]
     Network,
-    #[error("PikPak returned an incompatible response.")]
+    #[error("PikPak 返回了无法识别的数据。")]
     Protocol,
-    #[error("Invalid input: {0}")]
+    #[error("输入无效：{0}")]
     Invalid(&'static str),
-    #[error("Operation cancelled.")]
+    #[error("操作已取消。")]
     Cancelled,
-    #[error("Confirmation is required.")]
+    #[error("请先确认此操作。")]
     ConfirmationRequired,
-    #[error("System credential storage is unavailable.")]
+    #[error("无法访问 Windows 凭据管理器，请检查当前用户权限后重试。")]
     Credentials,
-    #[error(
-        "A Mokawa-authorized PikPak client registration is required; no third-party client secret is bundled."
-    )]
+    #[error("没有保存的账号，请先完成 PikPak 授权。")]
+    NoSession,
+    #[error("尚未取得 Mokawa 专用的 PikPak 客户端注册信息，暂时无法授权。")]
     ClientRegistrationRequired,
-    #[error(
-        "Mokawa desktop authorization is not integrated yet. PikPak now supports official browser/device authorization; do not use the legacy password flow."
-    )]
+    #[error("PikPak 授权尚未接入：Mokawa 的客户端注册与回调规则仍待确认，当前无法登录。")]
     AuthorizationPending,
-    #[error("Local file operation failed.")]
+    #[error("本地文件操作失败，请检查目录权限和剩余空间。")]
     Io,
 }
 pub type Result<T> = std::result::Result<T, Error>;

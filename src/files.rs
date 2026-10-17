@@ -13,7 +13,7 @@ pub fn validate_id(id: &str) -> Result<()> {
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
     {
-        return Err(Error::Invalid("file ID"));
+        return Err(Error::Invalid("文件标识"));
     }
     Ok(())
 }
@@ -23,7 +23,7 @@ pub fn validate_name(name: &str) -> Result<()> {
         || name.chars().any(|c| c.is_control() || "/\\".contains(c))
         || matches!(name, "." | "..")
     {
-        return Err(Error::Invalid("file name"));
+        return Err(Error::Invalid("文件名称"));
     }
     Ok(())
 }
@@ -38,7 +38,7 @@ impl ConfirmedDeletion {
             return Err(Error::ConfirmationRequired);
         }
         if ids.is_empty() || ids.len() > 100 {
-            return Err(Error::Invalid("select 1–100 files"));
+            return Err(Error::Invalid("请选择 1–100 个文件"));
         }
         for id in &ids {
             validate_id(id)?;

@@ -1,8 +1,9 @@
 mod input;
 mod pages;
+mod theme;
 use gpui::{
     App, Application, Bounds, Context, Entity, KeyBinding, SharedString, Subscription,
-    TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, size,
+    TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
     uniform_list,
 };
 use input::TextInput;
@@ -18,9 +19,13 @@ use mokawa::{
 };
 use pages::Page;
 use std::sync::Arc;
+use theme::color as rgb;
 actions!(mokawa, [Refresh, Quit]);
 struct Mokawa {
     browser: BrowserState,
+    authenticated: bool,
+    theme_mode: mokawa::settings::ThemeMode,
+    appearance_subscription: Option<Subscription>,
     page: Page,
     transfers: TransferCenter,
     download_admission: Arc<tokio::sync::Semaphore>,
@@ -41,6 +46,7 @@ struct Mokawa {
     descending: bool,
     grid: bool,
     pending_delete: Option<Vec<String>>,
+    context_menu: Option<gpui::Point<gpui::Pixels>>,
     task: Option<tokio::task::AbortHandle>,
 }
 #[derive(Clone)]
@@ -65,7 +71,14 @@ impl Mokawa {
         if self.busy {
             return;
         }
+        if !self.authenticated && !matches!(operation, Operation::List) {
+            self.page = Page::Login;
+            self.status = Error::NoSession.to_string();
+            cx.notify();
+            return;
+        }
         self.pending_delete = None;
+        self.context_menu = None;
         let is_listing = matches!(operation, Operation::List);
         let generation = self.browser.begin_navigation();
         let parent = self
@@ -75,7 +88,7 @@ impl Mokawa {
             .map(|p| p.0.clone())
             .unwrap_or_default();
         self.busy = true;
-        self.status = "Connecting to PikPak…".into();
+        self.status = "正在连接 PikPak…".into();
         let epoch = credentials::generation();
         let job = self.runtime.spawn(async move {
             let api = Api::new()?;
@@ -110,12 +123,26 @@ impl Mokawa {
                 this.task = None;
                 match result {
                     Ok(files) => {
+                        this.authenticated = true;
+                        this.page = Page::Files;
                         let count = files.len();
                         this.browser.apply(generation, files);
-                        this.status = format!("{count} items · PikPak");
+                        this.status = format!("共 {count} 项 · PikPak");
                     }
                     Err(error) => {
-                        if is_listing || matches!(error, Error::Unauthorized | Error::Credentials) {
+                        if matches!(
+                            error,
+                            Error::Unauthorized | Error::Credentials | Error::NoSession
+                        ) {
+                            this.authenticated = false;
+                            this.page = Page::Login;
+                        }
+                        if is_listing
+                            || matches!(
+                                error,
+                                Error::Unauthorized | Error::Credentials | Error::NoSession
+                            )
+                        {
                             this.browser.files.clear();
                         }
                         this.status = error.to_string();
@@ -141,7 +168,23 @@ impl Mokawa {
     }
 }
 impl Render for Mokawa {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        theme::apply(self.theme_mode, window.appearance());
+        let titlebar = self.titlebar();
+        let body = self.render_body(window, cx);
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(0x141621))
+            .text_color(rgb(0xe4e7f2))
+            .font_family("Microsoft YaHei UI")
+            .child(titlebar)
+            .child(div().flex_1().min_h_0().child(body))
+    }
+}
+impl Mokawa {
+    fn render_body(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         if self.page != Page::Files {
             return self.secondary_page(cx).into_any_element();
         }
@@ -160,7 +203,7 @@ impl Render for Mokawa {
                 .gap_2()
                 .items_center()
                 .child(
-                    Self::button("All files").on_click(cx.listener(|this, _, _, cx| {
+                    Self::button("我的文件").on_click(cx.listener(|this, _, _, cx| {
                         if !this.busy {
                             this.browser.path.clear();
                             this.request(Operation::List, cx);
@@ -189,76 +232,126 @@ impl Render for Mokawa {
             .overflow_hidden();
         if files.is_empty() {
             content = content.child(div().p_8().text_color(rgb(0x9da6be)).child(if self.busy {
-                "Loading your files…"
+                "正在加载文件…"
             } else if self.browser.files.is_empty() {
-                "No files loaded. Connect your PikPak account, then refresh."
+                "暂无文件。请先连接 PikPak 账号，再刷新。"
             } else {
-                "No matching files."
+                "没有匹配的文件。"
             }));
         }
+        let columns = if self.grid {
+            if _window.viewport_size().width >= px(1120.) {
+                3
+            } else {
+                2
+            }
+        } else {
+            1
+        };
         let list = uniform_list(
             "virtual-files",
-            files.len(),
+            files.len().div_ceil(columns),
             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                 let mut rows = Vec::with_capacity(range.len());
-                for index in range {
-                    let file = &this.browser.files[files[index]];
-                    let id = file.id.clone();
-                    let name = file.name.clone();
-                    let folder = file.is_folder();
-                    let highlighted = this.browser.selected.contains(&id);
-                    let row = div()
-                        .id(SharedString::from(format!("file-{id}")))
-                        .flex()
-                        .items_center()
-                        .gap_4()
-                        .px_4()
-                        .py_3()
-                        .rounded_lg()
-                        .cursor_pointer()
-                        .bg(rgb(if highlighted { 0x30374f } else { 0x191c28 }))
-                        .hover(|s| s.bg(rgb(0x292f42)))
-                        .child(if folder { "▣" } else { "▤" })
-                        .child(div().flex_1().min_w_0().truncate().child(file.name.clone()))
-                        .child(div().text_sm().text_color(rgb(0xa3acc3)).child(if folder {
-                            "Folder".into()
-                        } else {
-                            format!("{} bytes", file.size)
-                        }))
-                        .when(!this.grid, |row| {
-                            row.child(
-                                div()
-                                    .w(px(185.))
-                                    .text_sm()
-                                    .text_color(rgb(0xa3acc3))
-                                    .child(file.modified_time.clone()),
-                            )
-                        })
-                        .on_mouse_down(
-                            gpui::MouseButton::Left,
-                            cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
-                                if this.busy {
-                                    return;
-                                }
-                                if event.click_count == 2 && folder {
-                                    this.search.update(cx, |input, cx| {
-                                        input.reset();
+                for row_index in range {
+                    let mut group = div().flex().w_full();
+                    for index in row_index * columns..((row_index + 1) * columns).min(files.len()) {
+                        let file = &this.browser.files[files[index]];
+                        let id = file.id.clone();
+                        let right_id = id.clone();
+                        let name = file.name.clone();
+                        let folder = file.is_folder();
+                        let highlighted = this.browser.selected.contains(&id);
+                        let row = div()
+                            .id(SharedString::from(format!("file-{id}")))
+                            .flex()
+                            .items_center()
+                            .gap_4()
+                            .px_4()
+                            .py_3()
+                            .rounded_lg()
+                            .cursor_pointer()
+                            .bg(rgb(if highlighted { 0x30374f } else { 0x191c28 }))
+                            .hover(|s| s.bg(rgb(0x292f42)))
+                            .child(if folder { "▣" } else { "▤" })
+                            .child(div().flex_1().min_w_0().truncate().child(file.name.clone()))
+                            .child(div().text_sm().text_color(rgb(0xa3acc3)).child(if folder {
+                                "文件夹".into()
+                            } else {
+                                format!("{} 字节", file.size)
+                            }))
+                            .when(!this.grid, |row| {
+                                row.child(
+                                    div()
+                                        .w(px(185.))
+                                        .text_sm()
+                                        .text_color(rgb(0xa3acc3))
+                                        .child(file.modified_time.clone()),
+                                )
+                            })
+                            .when(this.grid, |row| {
+                                row.flex_col().items_start().h(px(148.)).m_1()
+                            })
+                            .flex_1()
+                            .min_w_0()
+                            .on_mouse_down(
+                                gpui::MouseButton::Right,
+                                cx.listener(
+                                    move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                        if this.busy {
+                                            return;
+                                        }
+                                        if !this.browser.selected.contains(&right_id) {
+                                            this.browser.selected.clear();
+                                            this.browser.selected.insert(right_id.clone());
+                                        }
+                                        let viewport = window.viewport_size();
+                                        this.context_menu = Some(gpui::point(
+                                            event
+                                                .position
+                                                .x
+                                                .min(viewport.width - px(190.))
+                                                .max(px(0.)),
+                                            (event.position.y - px(44.))
+                                                .min(viewport.height - px(250.))
+                                                .max(px(0.)),
+                                        ));
                                         cx.notify();
-                                    });
-                                    this.browser.path.push((id.clone(), name.clone()));
-                                    this.request(Operation::List, cx);
-                                } else {
-                                    if !event.modifiers.control {
-                                        this.browser.selected.clear();
+                                    },
+                                ),
+                            )
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                                    this.context_menu = None;
+                                    if this.busy {
+                                        return;
                                     }
-                                    if !this.browser.selected.insert(id.clone()) {
-                                        this.browser.selected.remove(&id);
+                                    if event.click_count == 2 && folder {
+                                        this.search.update(cx, |input, cx| {
+                                            input.reset();
+                                            cx.notify();
+                                        });
+                                        this.browser.path.push((id.clone(), name.clone()));
+                                        this.request(Operation::List, cx);
+                                    } else {
+                                        if !event.modifiers.control {
+                                            this.browser.selected.clear();
+                                        }
+                                        if !this.browser.selected.insert(id.clone()) {
+                                            this.browser.selected.remove(&id);
+                                        }
+                                        cx.notify();
                                     }
-                                    cx.notify();
-                                }
-                            }),
-                        );
-                    rows.push(row);
+                                }),
+                            );
+                        group = group.child(row);
+                    }
+                    for _ in ((row_index + 1) * columns).min(files.len())..(row_index + 1) * columns
+                    {
+                        group = group.child(div().flex_1().min_w_0());
+                    }
+                    rows.push(group);
                 }
                 rows
             }),
@@ -277,20 +370,20 @@ impl Render for Mokawa {
             .items_center()
             .child(div().w(px(240.)).child(self.search.clone()))
             .child(
-                Self::button("Refresh")
+                Self::button("刷新")
                     .on_click(cx.listener(|this, _, _, cx| this.request(Operation::List, cx))),
             )
             .child(
-                Self::button("Sort A ↔ Z").on_click(cx.listener(|this, _, _, cx| {
+                Self::button("切换名称排序").on_click(cx.listener(|this, _, _, cx| {
                     this.descending = !this.descending;
                     cx.notify();
                 })),
             )
             .child(
                 Self::button(if self.grid {
-                    "Detailed rows"
+                    "列表视图"
                 } else {
-                    "Compact rows"
+                    "网格视图"
                 })
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.grid = !this.grid;
@@ -299,7 +392,13 @@ impl Render for Mokawa {
             );
         let operations = div()
             .child(
-                Self::button("Download")
+                Self::button("上传文件").on_click(cx.listener(|this, _, _, cx| {
+                    this.status = "上传尚未接入，当前无法上传文件。".into();
+                    cx.notify();
+                })),
+            )
+            .child(
+                Self::button("下载")
                     .on_click(cx.listener(|this, _, _, cx| this.choose_download(cx))),
             )
             .flex()
@@ -308,25 +407,25 @@ impl Render for Mokawa {
             .items_center()
             .child(div().w(px(220.)).child(self.name.clone()))
             .child(
-                Self::button("New folder").on_click(cx.listener(|this, _, _, cx| {
+                Self::button("新建文件夹").on_click(cx.listener(|this, _, _, cx| {
                     let name = this.name.read(cx).content.to_string();
                     this.request(Operation::Create(name), cx);
                 })),
             )
             .child(
-                Self::button("Rename selected").on_click(cx.listener(|this, _, _, cx| {
+                Self::button("重命名").on_click(cx.listener(|this, _, _, cx| {
                     if this.browser.selected.len() == 1 {
                         let id = this.browser.selected.first().unwrap().clone();
                         let name = this.name.read(cx).content.to_string();
                         this.request(Operation::Rename(id, name), cx);
                     } else {
-                        this.status = "Select exactly one file to rename.".into();
+                        this.status = "请只选择一个文件后重命名。".into();
                         cx.notify();
                     }
                 })),
             )
             .child(
-                Self::button("Move to trash").on_click(cx.listener(|this, _, _, cx| {
+                Self::button("移入回收站").on_click(cx.listener(|this, _, _, cx| {
                     if !this.browser.selected.is_empty() {
                         this.pending_delete = Some(this.browser.selected.iter().cloned().collect());
                         cx.notify();
@@ -341,9 +440,38 @@ impl Render for Mokawa {
             .flex()
             .flex_col()
             .gap_4()
-            .child(crumbs)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(div().text_2xl().child("我的文件"))
+                    .child(
+                        Self::button(if self.authenticated {
+                            "已连接 PikPak"
+                        } else {
+                            "登录账号"
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.page = Page::Login;
+                            cx.notify();
+                        })),
+                    ),
+            )
             .child(toolbar)
-            .child(operations);
+            .child(crumbs)
+            .child(operations)
+            .child(
+                div()
+                    .flex()
+                    .px_4()
+                    .py_2()
+                    .text_sm()
+                    .text_color(rgb(0xaab3ce))
+                    .child(div().flex_1().child("名称"))
+                    .child(div().w(px(130.)).child("大小"))
+                    .child(div().w(px(185.)).child("修改时间")),
+            );
         if let Some(ids) = &self.pending_delete {
             center = center.child(
                 div()
@@ -354,24 +482,22 @@ impl Render for Mokawa {
                     .gap_3()
                     .items_center()
                     .child(format!(
-                        "Move {} selected files to PikPak trash?",
+                        "确定将选中的 {} 个文件移入 PikPak 回收站？",
                         ids.len()
                     ))
-                    .child(
-                        Self::button("Confirm trash").on_click(cx.listener(|this, _, _, cx| {
+                    .child(Self::button("确认移入回收站").on_click(cx.listener(
+                        |this, _, _, cx| {
                             if !this.busy
                                 && let Some(ids) = this.pending_delete.take()
                             {
                                 this.request(Operation::Trash(ids), cx);
                             }
-                        })),
-                    )
-                    .child(
-                        Self::button("Cancel").on_click(cx.listener(|this, _, _, cx| {
-                            this.pending_delete = None;
-                            cx.notify();
-                        })),
-                    ),
+                        },
+                    )))
+                    .child(Self::button("取消").on_click(cx.listener(|this, _, _, cx| {
+                        this.pending_delete = None;
+                        cx.notify();
+                    }))),
             );
         }
         center = center.child(content).child(
@@ -380,6 +506,7 @@ impl Render for Mokawa {
                 .text_color(rgb(0xaab3ce))
                 .child(self.status.clone()),
         );
+        let selected_present = selected.is_some();
         let mut detail = div()
             .w(px(220.))
             .flex_shrink_0()
@@ -389,33 +516,93 @@ impl Render for Mokawa {
             .flex()
             .flex_col()
             .gap_4()
-            .child(div().text_lg().child("File details"));
+            .child(div().text_lg().child("文件详情"));
         detail = if let Some(file) = selected {
             detail
                 .child(file.name)
-                .child(format!("{} bytes", file.size))
+                .child(format!("{} 字节", file.size))
                 .child(file.mime_type)
                 .child(file.modified_time)
         } else {
-            detail.child(div().text_sm().text_color(rgb(0x838ba4)).child(
-                "Select a file to see its information. Ctrl-click to select multiple items.",
-            ))
+            detail.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(0x838ba4))
+                    .child("选择文件查看详情，按住 Ctrl 可多选。"),
+            )
         };
         div()
+            .relative()
             .size_full()
             .flex()
             .bg(rgb(0x191c28))
             .text_color(rgb(0xe4e7f2))
-            .font_family("Segoe UI")
+            .font_family("Microsoft YaHei UI")
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.request(Operation::List, cx)))
             .child(sidebar)
             .child(center)
             .when(
-                !self.hide_details && _window.viewport_size().width >= px(1120.),
+                selected_present
+                    && !self.hide_details
+                    && _window.viewport_size().width >= px(1120.),
                 |root| root.child(detail),
             )
+            .children(self.context_menu.map(|position| {
+                div()
+                    .absolute()
+                    .left(position.x)
+                    .top(position.y)
+                    .w(px(180.))
+                    .p_2()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(rgb(0x30374f))
+                    .bg(rgb(0x202331))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(Self::button("下载").on_click(cx.listener(|this, _, _, cx| {
+                        this.context_menu = None;
+                        this.choose_download(cx);
+                    })))
+                    .child(
+                        Self::button("重命名").on_click(cx.listener(|this, _, _, cx| {
+                            this.context_menu = None;
+                            if this.browser.selected.len() == 1 {
+                                let id = this.browser.selected.first().unwrap().clone();
+                                let name = this.name.read(cx).content.to_string();
+                                this.request(Operation::Rename(id, name), cx);
+                            } else {
+                                this.status = "请只选择一个文件后重命名。".into();
+                                cx.notify();
+                            }
+                        })),
+                    )
+                    .child(
+                        Self::button("移入回收站").on_click(cx.listener(|this, _, _, cx| {
+                            this.context_menu = None;
+                            this.pending_delete =
+                                Some(this.browser.selected.iter().cloned().collect());
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        Self::button("关闭菜单").on_click(cx.listener(|this, _, _, cx| {
+                            this.context_menu = None;
+                            cx.notify();
+                        })),
+                    )
+            }))
             .into_any_element()
     }
+}
+fn smoke_theme() -> Option<mokawa::settings::ThemeMode> {
+    std::env::args().find_map(|arg| match arg.as_str() {
+        "--smoke-theme=light" => Some(mokawa::settings::ThemeMode::Light),
+        "--smoke-theme=dark" => Some(mokawa::settings::ThemeMode::Dark),
+        "--smoke-theme=system" => Some(mokawa::settings::ThemeMode::System),
+        _ => None,
+    })
 }
 pub fn run() {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -457,6 +644,7 @@ pub fn run() {
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
                     title: Some("Mokawa".into()),
+                    appears_transparent: true,
                     ..Default::default()
                 }),
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -465,9 +653,10 @@ pub fn run() {
                 window_background: gpui::WindowBackgroundAppearance::Opaque,
                 ..Default::default()
             },
-            |_, cx| {
-                let search = cx.new(|cx| TextInput::new("Search current folder…", cx));
-                let name = cx.new(|cx| TextInput::new("New name…", cx));
+            |window, cx| {
+                theme::apply(Default::default(), window.appearance());
+                let search = cx.new(|cx| TextInput::new("搜索当前文件夹", cx));
+                let name = cx.new(|cx| TextInput::new("输入文件或文件夹名称", cx));
                 cx.new(|cx| {
                     let subscription = cx.observe(&search, |this: &mut Mokawa, _, cx| {
                         let query = this.search.read(cx).content.to_string();
@@ -483,6 +672,9 @@ pub fn run() {
                     });
                     let mut view = Mokawa {
                         browser: BrowserState::default(),
+                        authenticated: false,
+                        theme_mode: smoke_theme().unwrap_or_default(),
+                        appearance_subscription: None,
                         page: match std::env::args()
                             .find_map(|arg| arg.strip_prefix("--smoke-page=").map(str::to_owned))
                             .as_deref()
@@ -506,14 +698,19 @@ pub fn run() {
                         name,
                         _subscription: subscription,
                         runtime: runtime.clone(),
-                        status: "Not connected · Official authorization integration is pending."
-                            .into(),
+                        status: "尚未登录 · 授权接入待完成".into(),
                         busy: false,
                         descending: false,
                         grid: false,
                         pending_delete: None,
+                        context_menu: None,
                         task: None,
                     };
+                    view.appearance_subscription =
+                        Some(cx.observe_window_appearance(window, |this, window, cx| {
+                            theme::apply(this.theme_mode, window.appearance());
+                            cx.notify();
+                        }));
                     view.start_background(cx);
                     let center = view.transfers.clone();
                     let runtime = view.runtime.clone();
@@ -550,7 +747,13 @@ pub fn run() {
         if std::env::args().any(|arg| arg == "--smoke-test") {
             let timer = cx
                 .background_executor()
-                .timer(std::time::Duration::from_secs(5));
+                .timer(std::time::Duration::from_secs(
+                    if std::env::args().any(|arg| arg == "--smoke-interactive") {
+                        60
+                    } else {
+                        5
+                    },
+                ));
             cx.spawn(async move |cx| {
                 timer.await;
                 let _ = cx.update(|cx| cx.quit());

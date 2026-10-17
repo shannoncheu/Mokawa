@@ -44,8 +44,11 @@ fn save_unlocked(session: &Session) -> Result<()> {
 }
 #[cfg(windows)]
 pub fn load() -> Result<Session> {
-    serde_json::from_str(&entry()?.get_password().map_err(|_| Error::Credentials)?)
-        .map_err(|_| Error::Credentials)
+    serde_json::from_str(&entry()?.get_password().map_err(|error| match error {
+        keyring::Error::NoEntry => Error::NoSession,
+        _ => Error::Credentials,
+    })?)
+    .map_err(|_| Error::Credentials)
 }
 #[cfg(windows)]
 fn delete_unlocked() -> Result<()> {

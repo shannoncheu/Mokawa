@@ -8,90 +8,194 @@ use mokawa::{
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Page {
     Login,
+    Home,
     Files,
+    Recent,
+    Favorites,
+    Offline,
+    Shares,
+    Trash,
     Tasks,
     Settings,
 }
 impl Mokawa {
-    pub(super) fn navigation(&self, cx: &mut Context<Self>) -> gpui::Div {
+    pub(super) fn titlebar(&self) -> gpui::Div {
+        use gpui::WindowControlArea;
+        let control = |id: &'static str, glyph: &'static str, area| {
+            div()
+                .id(id)
+                .w(px(46.))
+                .h_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .window_control_area(area)
+                .hover(|s| s.bg(rgb(0x3b4058)))
+                .child(glyph)
+        };
         div()
-            .w(px(180.))
+            .h(px(44.))
             .flex_shrink_0()
-            .h_full()
-            .p_4()
+            .w_full()
             .flex()
-            .flex_col()
-            .gap_2()
+            .items_center()
             .bg(rgb(0x141621))
             .child(
                 div()
-                    .text_2xl()
-                    .text_color(rgb(0xe2e6ff))
-                    .mb_2()
-                    .child("Mokawa"),
+                    .id("window-drag")
+                    .flex_1()
+                    .h_full()
+                    .px_5()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .window_control_area(WindowControlArea::Drag)
+                    .child(
+                        div()
+                            .size(px(24.))
+                            .rounded_lg()
+                            .bg(rgb(0x949ce5))
+                            .text_color(gpui::white())
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child("M"),
+                    )
+                    .child(div().text_sm().child("Mokawa")),
             )
             .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(0x838ba4))
-                    .mb_4()
-                    .child("YOUR PIKPAK, AT EASE"),
-            )
-            .children(
-                [
-                    ("Account", Page::Login),
-                    ("All files", Page::Files),
-                    ("Task center", Page::Tasks),
-                    ("Settings", Page::Settings),
-                ]
-                .into_iter()
-                .map(|(label, page)| {
-                    Self::button(label)
-                        .id(SharedString::from(format!("nav-{label}")))
-                        .when(self.page == page, |button| button.bg(rgb(0x3b4058)))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.page = page;
-                            this.pending_delete = None;
-                            cx.notify();
-                        }))
-                }),
+                control("minimize", "−", WindowControlArea::Min)
+                    .on_click(|_, window, _| window.minimize_window()),
             )
             .child(
-                div()
-                    .mt_4()
-                    .text_xs()
-                    .text_color(rgb(0x6c758d))
-                    .child("Offline tasks, shares and trash management are not available yet."),
+                control("maximize", "□", WindowControlArea::Max)
+                    .on_click(|_, window, _| window.zoom_window()),
             )
-            .child(div().flex_1())
             .child(
-                Self::button("Sign out").on_click(cx.listener(|this, _, _, cx| {
-                    if let Some(task) = this.task.take() {
-                        task.abort();
-                    }
-                    this.download_scope.cancel();
-                    this.download_scope = tokio_util::sync::CancellationToken::new();
-                    this.transfers.cancel_all();
-                    this.busy = false;
-                    this.browser.begin_navigation();
-                    this.browser.files.clear();
-                    this.browser.path.clear();
-                    this.pending_delete = None;
+                control("close", "×", WindowControlArea::Close)
+                    .hover(|s| s.bg(gpui::rgb(0xc42b42)).text_color(gpui::white()))
+                    .on_click(|_, _, cx| cx.quit()),
+            )
+    }
+    pub(super) fn navigation(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let mut nav = div()
+            .w(px(196.))
+            .flex_shrink_0()
+            .h_full()
+            .p_3()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .bg(rgb(0x141621));
+        for (icon, label, page) in [
+            ("⌂", "首页", Page::Home),
+            ("▤", "我的文件", Page::Files),
+            ("◷", "最近访问", Page::Recent),
+            ("☆", "收藏", Page::Favorites),
+            ("↓", "离线下载", Page::Offline),
+            ("↗", "分享管理", Page::Shares),
+            ("▢", "回收站", Page::Trash),
+            ("≡", "任务中心", Page::Tasks),
+            ("⚙", "设置", Page::Settings),
+        ] {
+            nav = nav.child(
+                Self::button(label)
+                    .w_full()
+                    .flex()
+                    .gap_3()
+                    .child(icon)
+                    .when(self.page == page, |s| s.bg(rgb(0x30374f)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.pending_delete = None;
+                        this.page = if !this.authenticated
+                            && !matches!(page, Page::Settings | Page::Tasks)
+                        {
+                            Page::Login
+                        } else {
+                            page
+                        };
+                        cx.notify();
+                    })),
+            );
+        }
+        nav = nav.child(div().flex_1());
+        if self.authenticated {
+            nav = nav.child(
+                Self::button("退出登录").on_click(cx.listener(|this, _, _, cx| this.sign_out(cx))),
+            );
+        } else {
+            nav = nav.child(Self::button("连接 PikPak 账号").on_click(cx.listener(
+                |this, _, _, cx| {
                     this.page = Page::Login;
-                    this.status = match credentials::delete() {
-                        Ok(()) => "Local session removed.".into(),
-                        Err(error) => error.to_string(),
-                    };
                     cx.notify();
-                })),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .mt_4()
-                    .text_color(rgb(0x838ba4))
-                    .child("A calmer way to manage your files."),
-            )
+                },
+            )));
+        }
+        nav.child(
+            div()
+                .text_xs()
+                .p_2()
+                .text_color(rgb(0x838ba4))
+                .child("Mokawa · 0.1.0"),
+        )
+    }
+    fn sign_out(&mut self, cx: &mut Context<Self>) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+        self.download_scope.cancel();
+        self.download_scope = tokio_util::sync::CancellationToken::new();
+        self.transfers.cancel_all();
+        self.authenticated = false;
+        self.browser.begin_navigation();
+        self.browser.files.clear();
+        self.browser.path.clear();
+        self.pending_delete = None;
+        self.page = Page::Login;
+        self.busy = true;
+        self.status = "正在清理本地会话…".into();
+        let job = self.runtime.spawn_blocking(credentials::delete);
+        cx.spawn(async move |this, cx| {
+            let result = job.await.unwrap_or(Err(Error::Cancelled));
+            let _ = this.update(cx, |this, cx| {
+                this.busy = false;
+                this.status = match result {
+                    Ok(()) => "已退出登录，本地会话已删除。".into(),
+                    Err(error) => format!("本地会话清理失败：{error} 请重试。"),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+    fn save_preferences(&mut self, cx: &mut Context<Self>) {
+        if self.saving_preferences {
+            return;
+        }
+        self.saving_preferences = true;
+        let preferences = Preferences {
+            compact_rows: self.grid,
+            hide_details: self.hide_details,
+            theme: self.theme_mode,
+        };
+        let job = self.runtime.spawn(async move {
+            preferences
+                .save(&mokawa::settings::data_dir().join("preferences.json"))
+                .await
+        });
+        cx.spawn(async move |this, cx| {
+            let result = job.await.unwrap_or(Err(Error::Cancelled));
+            let _ = this.update(cx, |this, cx| {
+                this.saving_preferences = false;
+                this.status = match result {
+                    Ok(()) => "设置已保存。".into(),
+                    Err(error) => format!("设置保存失败：{error}"),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
     }
     pub(super) fn secondary_page(&self, cx: &mut Context<Self>) -> gpui::Div {
         let mut body = div()
@@ -104,82 +208,97 @@ impl Mokawa {
             .flex_col()
             .gap_4()
             .overflow_y_scroll();
-        body=match self.page {
-            Page::Login=>body
-                .child(div().text_3xl().child("Your files. A little calmer."))
-                .child(div().text_color(rgb(0xaab3ce)).child("Connect your PikPak account to Mokawa."))
-                .child(div().p_5().rounded_lg().bg(rgb(0x202331)).flex().flex_col().gap_4()
-                    .child("PikPak now offers official connected-app authorization.")
-                    .child(div().text_sm().text_color(rgb(0xaab3ce)).child("Mokawa's desktop authorization integration is still being verified. This build does not ask for your PikPak password or an exported token."))
-                    .child(Self::button("About PikPak connected apps").on_click(|_,_,cx|cx.open_url("https://mypikpak.com/en-US/help-center/connected_apps/managing_connected_apps/what_are_connected_apps")))
-                    .child(Self::button("Open saved account").on_click(cx.listener(|this,_,_,cx|{this.page=Page::Files;this.request(Operation::List,cx);}))))
-                .child(div().text_sm().text_color(rgb(0x838ba4)).child("A saved session uses Windows Credential Manager. No account data is sent to a Mokawa server.")),
-            Page::Settings=>body
-                .child(div().text_3xl().child("Settings"))
-                .child("Appearance")
-                .child(div().text_sm().text_color(rgb(0xaab3ce)).child("Dark · System window frame · Solid background"))
-                .child(Self::button(if self.grid{"Use detailed rows"}else{"Use compact rows"}).on_click(cx.listener(|this,_,_,cx|{this.grid = !this.grid;cx.notify();})))
-                .child(Self::button(if self.hide_details{"Show file details"}else{"Hide file details"}).on_click(cx.listener(|this,_,_,cx|{this.hide_details = !this.hide_details;cx.notify();})))
-                .child(Self::button("Save preferences").on_click(cx.listener(|this,_,_,cx|{
-                    if this.saving_preferences{return;}this.saving_preferences=true;
-                    let preferences=Preferences{compact_rows:this.grid,hide_details:this.hide_details};
-                    let job=this.runtime.spawn(async move{preferences.save(&mokawa::settings::data_dir().join("preferences.json")).await});
-                    cx.spawn(async move|this,cx|{let result=job.await.unwrap_or(Err(Error::Cancelled));let _=this.update(cx,|this,cx|{this.saving_preferences=false;this.status=match result{Ok(())=>"Preferences saved.".into(),Err(error)=>error.to_string()};cx.notify();});}).detach();
-                })))
-                .child(div().mt_4().text_lg().child("Mokawa 0.1.0"))
-                .child(div().text_sm().text_color(rgb(0xaab3ce)).child("Windows 10/11 x64 · GPUI · PikPak only"))
-                .child(div().text_sm().text_color(rgb(0x838ba4)).child("This development build is unsigned. Background blur and media playback have not been enabled.")),
-            Page::Tasks=>{
-                let snapshot=self.transfers.snapshot();
-                body=body.child(div().text_3xl().child("Task center"))
-                    .child(div().text_sm().text_color(rgb(0xaab3ce)).child("Downloads · Up to two at a time. Pause and resume are unavailable."));
-                if !self.ready {body=body.child("Loading saved tasks…");}
-                else if snapshot.records.is_empty(){body=body.child(div().p_8().rounded_lg().bg(rgb(0x202331)).child("No downloads yet. Select a file, then choose Download."));}
-                if let Some(error)=snapshot.persistence_error{body=body.child(format!("Task history could not be saved: {error}"));}
-                for record in snapshot.records.iter().rev(){
-                    let id=record.id.clone();
-                    let phase=match record.phase{TransferPhase::Queued=>"Queued",TransferPhase::Running=>"Downloading",TransferPhase::Interrupted=>"Interrupted · start a new download",TransferPhase::Completed=>"Completed",TransferPhase::Cancelled=>"Cancelled",TransferPhase::Failed=>"Failed"};
-                    let mut row=div().p_4().rounded_lg().bg(rgb(0x202331)).flex().flex_col().gap_2().child(record.file_name.clone()).child(format!("{phase} · {} bytes received",record.completed));
-                    if let Some(total)=record.total && total>0 {row=row.child(div().h(px(4.)).w_full().bg(rgb(0x30374f)).child(div().h_full().w(gpui::relative((record.completed as f32/total as f32).clamp(0.,1.))).bg(rgb(0x949ce5))));}
-                    if let Some(speed)=snapshot.speeds.get(&id){row=row.child(format!("{speed} bytes/s average"));}
-                    if let Some(error)=snapshot.errors.get(&id){row=row.child(error.clone());}
-                    if matches!(record.phase,TransferPhase::Queued|TransferPhase::Running){row=row.child(Self::button("Cancel download").id(SharedString::from(format!("cancel-{id}"))).on_click(cx.listener(move|this,_,_,cx|{this.transfers.cancel(&id);cx.notify();})));}
-                    body=body.child(row);
+        body = match self.page {
+            Page::Login => body.items_center().justify_center()
+                .child(div().w_full().max_w(px(480.)).p_8().rounded_xl().bg(rgb(0x191c28)).flex().flex_col().gap_4()
+                    .child(div().text_color(rgb(0x949ce5)).text_3xl().child("Mokawa"))
+                    .child(div().text_2xl().child("连接 PikPak 账号"))
+                    .child(div().text_sm().text_color(rgb(0xaab3ce)).child("使用 PikPak 官方授权连接网盘，凭据仅保存在 Windows 凭据管理器中。"))
+                    .child(Self::button(if self.busy { "正在验证会话…" } else { "使用 PikPak 授权登录" }).bg(rgb(0x30374f)).on_click(cx.listener(|this, _, _, cx| {
+                        if !this.busy { this.status = Error::AuthorizationPending.to_string(); cx.notify(); }
+                    })))
+                    .child(div().p_4().rounded_lg().bg(rgb(0x202331)).text_sm().child("授权尚未开放：Mokawa 的官方客户端注册及回调规则仍待确认。当前无法新增登录，不提供未经确认的密码登录。"))
+                    .child(Self::button("重试已保存的会话").on_click(cx.listener(|this, _, _, cx| this.request(Operation::List, cx))))
+                    .child(Self::button("查看 PikPak 官方授权说明").on_click(|_, _, cx| cx.open_url("https://mypikpak.com/en-US/help-center/connected_apps/managing_connected_apps/what_are_connected_apps")))) ,
+            Page::Settings => {
+                body = body.child(div().text_2xl().child("设置")).child(div().text_lg().child("外观主题"))
+                    .child(div().text_sm().text_color(rgb(0xaab3ce)).child("主题立即生效并自动保存；跟随系统时响应 Windows 外观变化。"));
+                let mut choices = div().flex().gap_3();
+                for (label, mode) in [("跟随系统", mokawa::settings::ThemeMode::System), ("浅色", mokawa::settings::ThemeMode::Light), ("深色", mokawa::settings::ThemeMode::Dark)] {
+                    choices = choices.child(Self::button(label).when(self.theme_mode == mode, |s| s.bg(rgb(0x30374f)))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            if this.saving_preferences { return; }
+                            this.theme_mode = mode; theme::apply(mode, window.appearance());
+                            this.search.update(cx, |_, cx| cx.notify()); this.name.update(cx, |_, cx| cx.notify());
+                            this.save_preferences(cx); cx.notify();
+                        })));
                 }
-                body.child(div().text_sm().text_color(rgb(0x838ba4)).child("Uploads and offline cloud tasks are not implemented in this build."))
+                body.child(choices).child(div().mt_4().text_lg().child("文件管理"))
+                    .child(Self::button(if self.hide_details { "显示所选文件详情" } else { "隐藏所选文件详情" }).on_click(cx.listener(|this, _, _, cx| { this.hide_details = !this.hide_details; cx.notify(); })))
+                    .child(Self::button("保存设置").on_click(cx.listener(|this, _, _, cx| this.save_preferences(cx))))
+                    .child(div().mt_4().text_lg().child("关于 Mokawa"))
+                    .child(div().text_sm().text_color(rgb(0xaab3ce)).child("版本 0.1.0 · Windows 10/11 x64 · 仅支持 PikPak"))
+                    .child(div().text_sm().text_color(rgb(0x838ba4)).child("开发预览版，尚未签名。授权、上传和媒体播放尚未接入。"))
             },
-            Page::Files=>body,
+            Page::Tasks => {
+                let snapshot = self.transfers.snapshot();
+                body = body.child(div().text_2xl().child("任务中心")).child(div().text_sm().text_color(rgb(0xaab3ce)).child("下载队列 · 最多同时下载 2 个文件，暂不支持暂停和续传。"));
+                if !self.ready { body = body.child("正在读取任务…"); }
+                else if snapshot.records.is_empty() { body = body.child(div().p_8().rounded_lg().bg(rgb(0x202331)).child("暂无下载任务。登录后，选择文件并点击下载。")); }
+                if let Some(error) = snapshot.persistence_error { body = body.child(format!("任务记录保存失败：{error}")); }
+                for record in snapshot.records.iter().rev() {
+                    let id = record.id.clone();
+                    let phase = match record.phase { TransferPhase::Queued => "排队中", TransferPhase::Running => "下载中", TransferPhase::Interrupted => "已中断，请重新下载", TransferPhase::Completed => "已完成", TransferPhase::Cancelled => "已取消", TransferPhase::Failed => "失败" };
+                    let mut row = div().p_4().rounded_lg().bg(rgb(0x202331)).flex().flex_col().gap_2().child(record.file_name.clone()).child(format!("{phase} · 已接收 {} 字节", record.completed));
+                    if let Some(total) = record.total && total > 0 { row = row.child(div().h(px(4.)).w_full().bg(rgb(0x30374f)).child(div().h_full().w(gpui::relative((record.completed as f32 / total as f32).clamp(0.,1.))).bg(rgb(0x949ce5)))); }
+                    if let Some(speed) = snapshot.speeds.get(&id) { row = row.child(format!("平均 {speed} 字节/秒")); }
+                    if let Some(error) = snapshot.errors.get(&id) { row = row.child(error.clone()); }
+                    if matches!(record.phase, TransferPhase::Queued | TransferPhase::Running) { row = row.child(Self::button("取消下载").id(SharedString::from(format!("cancel-{id}"))).on_click(cx.listener(move |this, _, _, cx| { this.transfers.cancel(&id); cx.notify(); }))); }
+                    body = body.child(row);
+                }
+                body
+            },
+            Page::Home => body.child(div().text_2xl().child("首页")).child("选择“我的文件”浏览 PikPak 网盘。"),
+            Page::Recent | Page::Favorites | Page::Offline | Page::Shares | Page::Trash => {
+                let title = match self.page { Page::Recent => "最近访问", Page::Favorites => "收藏", Page::Offline => "离线下载", Page::Shares => "分享管理", _ => "回收站" };
+                body.child(div().text_2xl().child(title)).child(div().p_8().rounded_lg().bg(rgb(0x202331)).child("此功能尚未接入，当前无法操作。"))
+            },
+            Page::Files => body,
         };
-        div()
+        let shell = div()
             .size_full()
             .flex()
-            .bg(rgb(0x191c28))
-            .text_color(rgb(0xe4e7f2))
-            .font_family("Segoe UI")
-            .child(self.navigation(cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .flex()
-                    .flex_col()
-                    .child(body)
-                    .child(
-                        div()
-                            .p_4()
-                            .text_sm()
-                            .text_color(rgb(0xaab3ce))
-                            .child(self.status.clone()),
-                    ),
-            )
+            .bg(rgb(0x141621))
+            .text_color(rgb(0xe4e7f2));
+        let shell = if self.page == Page::Login {
+            shell
+        } else {
+            shell.child(self.navigation(cx))
+        };
+        shell.child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .flex()
+                .flex_col()
+                .child(body)
+                .child(
+                    div()
+                        .px_8()
+                        .py_3()
+                        .text_sm()
+                        .text_color(rgb(0xaab3ce))
+                        .child(self.status.clone()),
+                ),
+        )
     }
     pub(super) fn choose_download(&mut self, cx: &mut Context<Self>) {
         if !self.ready || self.busy {
             return;
         }
         if self.browser.selected.len() != 1 {
-            self.status = "Select one file to download.".into();
+            self.status = "请选择一个文件下载。".into();
             cx.notify();
             return;
         }
@@ -190,12 +309,12 @@ impl Mokawa {
             .find(|f| self.browser.selected.contains(&f.id) && !f.is_folder())
             .cloned()
         else {
-            self.status = "Choose a file rather than a folder.".into();
+            self.status = "请选择文件，暂不支持整文件夹下载。".into();
             cx.notify();
             return;
         };
         let Ok(admission) = self.download_admission.clone().try_acquire_owned() else {
-            self.status = "Download queue is full. Wait for an existing task to finish.".into();
+            self.status = "下载队列已满，请等待现有任务完成。".into();
             cx.notify();
             return;
         };
@@ -206,7 +325,7 @@ impl Mokawa {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Choose download folder".into()),
+            prompt: Some("选择下载目录".into()),
         });
         cx.spawn(async move |this, cx| {
             let directory = match picker.await {
@@ -258,13 +377,13 @@ impl Mokawa {
                         Ok(())
                     });
                     this.page = Page::Tasks;
-                    this.status = "Preparing download…".into();
+                    this.status = "正在准备下载…".into();
                     cx.spawn(async move |this, cx| {
                         let result: Result<()> = job.await.unwrap_or(Err(Error::Cancelled));
                         let _ = this.update(cx, |this, cx| {
                             if credentials::generation()!=epoch{return;}
                             this.status = match result {
-                                Ok(()) => "Download task finished. See its status above.".into(),
+                                Ok(()) => "下载任务已结束，请查看任务状态。".into(),
                                 Err(error) => error.to_string(),
                             };
                             cx.notify();
@@ -283,22 +402,35 @@ impl Mokawa {
             let tasks = center.restore().await;
             let preferences =
                 Preferences::load(&mokawa::settings::data_dir().join("preferences.json")).await;
-            (tasks, preferences)
+            let saved_session = credentials::load();
+            (tasks, preferences, saved_session)
         });
         cx.spawn(async move |this, cx| {
-            if let Ok((tasks, preferences)) = job.await {
+            if let Ok((tasks, preferences, saved_session)) = job.await {
                 let _ = this.update(cx, |this, cx| {
                     this.ready = tasks.is_ok();
                     if let Err(error) = tasks {
-                        this.status = format!("Task history unavailable: {error}");
+                        this.status = format!("无法读取任务记录：{error}");
                     }
                     match preferences {
                         Ok(p) => {
                             this.grid = p.compact_rows;
                             this.hide_details = p.hide_details;
+                            this.theme_mode = smoke_theme().unwrap_or(p.theme);
                         }
-                        Err(error) => this.status = format!("Preferences unavailable: {error}"),
+                        Err(error) => this.status = format!("无法读取设置：{error}"),
                     };
+                    match saved_session {
+                        Ok(_) => {
+                            if this.page == Page::Login && !this.busy {
+                                this.request(Operation::List, cx);
+                            }
+                        }
+                        Err(Error::NoSession) => {}
+                        Err(error) => this.status = error.to_string(),
+                    }
+                    this.search.update(cx, |_, cx| cx.notify());
+                    this.name.update(cx, |_, cx| cx.notify());
                     cx.notify();
                 });
             }

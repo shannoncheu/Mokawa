@@ -12,7 +12,7 @@ async fn run() -> Result<()> {
     }
     if std::env::args().any(|a| a == "--logout") {
         credentials::delete()?;
-        println!("Mokawa: local session removed.");
+        println!("Mokawa：本地会话已删除。");
         return Ok(());
     }
     // Official PikPak CLI documentation now states that password login is unsupported.

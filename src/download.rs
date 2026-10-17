@@ -22,7 +22,7 @@ pub async fn download(
     }
     validate_name(name)?;
     if name.ends_with('.') || name.ends_with(' ') || name.chars().any(|c| "<>:\"|?*".contains(c)) {
-        return Err(Error::Invalid("Windows file name"));
+        return Err(Error::Invalid("Windows 文件名称"));
     }
     let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
     if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
@@ -30,17 +30,17 @@ pub async fn download(
             && (stem.starts_with("COM") || stem.starts_with("LPT"))
             && matches!(stem.as_bytes()[3], b'1'..=b'9'))
     {
-        return Err(Error::Invalid("reserved Windows file name"));
+        return Err(Error::Invalid("Windows 保留文件名称"));
     }
-    let url = reqwest::Url::parse(url).map_err(|_| Error::Invalid("download URL"))?;
+    let url = reqwest::Url::parse(url).map_err(|_| Error::Invalid("下载地址"))?;
     if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
-        return Err(Error::Invalid("download URL must use HTTPS"));
+        return Err(Error::Invalid("下载地址必须使用 HTTPS"));
     }
     let directory = tokio::fs::canonicalize(directory).await?;
     let destination = directory.join(name);
     let partial = directory.join(format!("{name}.mokawa.part"));
     if tokio::fs::try_exists(&destination).await? {
-        return Err(Error::Invalid("destination already exists"));
+        return Err(Error::Invalid("目标文件已存在"));
     }
     let (file, _cleanup) = create_partial(partial.clone()).await?;
     let mut file = tokio::fs::File::from_std(file);
@@ -89,7 +89,7 @@ pub async fn load_queue(path: &Path) -> Result<Vec<TransferRecord>> {
         .read_to_end(&mut bytes)
         .await?;
     if bytes.len() as u64 > MAX_QUEUE_BYTES {
-        return Err(Error::Invalid("task history exceeds size limit"));
+        return Err(Error::Invalid("任务记录超过大小限制"));
     }
     let mut records: Vec<TransferRecord> =
         serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;

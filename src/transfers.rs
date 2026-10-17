@@ -119,7 +119,7 @@ impl TransferCenter {
             }
             let mut state = self.0.state.lock().unwrap();
             if state.records.iter().any(|r| r.id == id) {
-                return Err(Error::Invalid("duplicate task ID"));
+                return Err(Error::Invalid("重复的任务标识"));
             }
             while state.records.len() >= MAX_HISTORY {
                 let Some(index) = state
@@ -127,7 +127,7 @@ impl TransferCenter {
                     .iter()
                     .position(|r| !active.contains_key(&r.id))
                 else {
-                    return Err(Error::Invalid("download history is full"));
+                    return Err(Error::Invalid("下载历史已满"));
                 };
                 let removed = state.records.remove(index);
                 state.errors.remove(&removed.id);

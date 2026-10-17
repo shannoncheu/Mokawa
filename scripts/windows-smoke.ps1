@@ -12,9 +12,10 @@ public static class MokawaWindow {
 }
 '@
 $results = @()
-foreach ($scenario in @('account', 'files', 'tasks', 'settings', 'files-small')) {
-    $page = if ($scenario -eq 'files-small') { 'files' } else { $scenario }
-    $arguments = @('--smoke-test', "--smoke-page=$page")
+foreach ($scenario in @('account', 'files', 'tasks', 'settings', 'files-small', 'account-dark', 'files-dark', 'settings-dark')) {
+    $page = $scenario -replace '-small|-dark', ''
+    $theme = if ($scenario.EndsWith('-dark')) { 'dark' } else { 'light' }
+    $arguments = @('--smoke-test', "--smoke-page=$page", "--smoke-theme=$theme")
     if ($scenario -eq 'files-small') { $arguments += '--smoke-small' }
     $process = $null
     try {

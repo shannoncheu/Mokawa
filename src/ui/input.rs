@@ -1,3 +1,4 @@
+use super::theme::color as rgb;
 // Adapted from GPUI 0.2.2 examples/input.rs, Apache-2.0; see THIRD_PARTY.md.
 use std::ops::Range;
 
@@ -5,8 +6,8 @@ use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, LayoutId, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine,
-    SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill, hsla,
-    point, prelude::*, px, relative, rgb, rgba, size,
+    SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill,
+    point, prelude::*, px, relative, rgba, size,
 };
 use unicode_segmentation::*;
 
@@ -446,7 +447,7 @@ impl Element for TextElement {
         let style = window.text_style();
 
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), hsla(0.62, 0.1, 0.65, 1.0))
+            (input.placeholder.clone(), rgb(0x838ba4).into())
         } else {
             (content, style.color)
         };
@@ -588,6 +589,7 @@ impl Render for TextInput {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
+            .rounded_lg()
             .bg(rgb(0x202331))
             .line_height(px(30.))
             .text_size(px(14.))

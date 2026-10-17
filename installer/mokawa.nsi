@@ -7,16 +7,16 @@ InstallDir "$LOCALAPPDATA\Programs\Mokawa"
 RequestExecutionLevel user
 VIProductVersion "0.1.0.0"
 VIAddVersionKey "ProductName" "Mokawa"
-VIAddVersionKey "FileDescription" "Mokawa installer"
+VIAddVersionKey "FileDescription" "Mokawa 安装程序"
 VIAddVersionKey "FileVersion" "0.1.0"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
-!insertmacro MUI_LANGUAGE "English"
+!insertmacro MUI_LANGUAGE "SimpChinese"
 Function .onInit
   ${IfNot} ${RunningX64}
-    MessageBox MB_OK "Mokawa requires Windows x64."
+    MessageBox MB_OK "Mokawa 需要 Windows 10/11 x64。"
     Abort
   ${EndIf}
   SetRegView 64
