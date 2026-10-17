@@ -42,6 +42,7 @@ jobs:
       - name: Build native Windows installer
         run: npm run desktop:build -- --ci
       - name: Install and verify native desktop
+        timeout-minutes: 10
         shell: pwsh
         run: ./scripts/windows-tauri-smoke.ps1
       - uses: actions/upload-artifact@v4

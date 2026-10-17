@@ -2,6 +2,7 @@ param([Parameter(Mandatory=$true)][string]$Executable,[int]$Seconds=15,[int]$Cyc
 $ErrorActionPreference='Stop'
 $rows=[System.Collections.Generic.List[object]]::new()
 for($cycle=1;$cycle -le $Cycles;$cycle++) {
+    Write-Host "Mokawa process-tree sampling cycle $cycle / $Cycles"
     $process=Start-Process $Executable -PassThru
     try {
         Start-Sleep -Seconds 3
@@ -28,6 +29,10 @@ for($cycle=1;$cycle -le $Cycles;$cycle++) {
                 Threads=($members | ForEach-Object {$_.Threads.Count} | Measure-Object -Sum).Sum
                 CpuOneCorePercent=$percent
             })
+            if ($second % 5 -eq 0) {
+                Write-Host "Mokawa cycle $cycle sample $second / $Seconds"
+                $rows | Export-Csv -NoTypeInformation dist/tauri-performance.csv
+            }
             $previousCpu=$cpu;$previousTime=$now;$previousIds=$key
         }
     } finally {
