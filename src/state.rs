@@ -20,20 +20,30 @@ impl BrowserState {
         true
     }
     pub fn visible(&self, search: &str, descending: bool) -> Vec<File> {
+        self.visible_indices(search, descending)
+            .into_iter()
+            .map(|index| self.files[index].clone())
+            .collect()
+    }
+    pub fn visible_indices(&self, search: &str, descending: bool) -> Vec<usize> {
         let search = search.to_lowercase();
-        let mut out: Vec<_> = self
+        let mut keyed: Vec<_> = self
             .files
             .iter()
-            .filter(|f| f.name.to_lowercase().contains(&search))
-            .cloned()
+            .enumerate()
+            .filter_map(|(index, file)| {
+                let name = file.name.to_lowercase();
+                name.contains(&search)
+                    .then_some((index, !file.is_folder(), name))
+            })
             .collect();
-        out.sort_by(|a, b| {
-            b.is_folder().cmp(&a.is_folder()).then_with(|| {
-                let order = a.name.to_lowercase().cmp(&b.name.to_lowercase());
+        keyed.sort_by(|a, b| {
+            a.1.cmp(&b.1).then_with(|| {
+                let order = a.2.cmp(&b.2);
                 if descending { order.reverse() } else { order }
             })
         });
-        out
+        keyed.into_iter().map(|(index, _, _)| index).collect()
     }
 }
 

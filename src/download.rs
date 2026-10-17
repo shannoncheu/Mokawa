@@ -5,7 +5,9 @@ use crate::{
 };
 use futures_util::StreamExt;
 use std::{path::Path, time::Duration};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+pub const MAX_QUEUE_BYTES: u64 = 2 * 1024 * 1024;
 use tokio_util::sync::CancellationToken;
 /// New downloads only. Range/resume is deliberately unavailable until live validation.
 pub async fn download(
@@ -50,12 +52,14 @@ pub async fn download(
         let response=tokio::select!{_ = cancel.cancelled()=>return Err(Error::Cancelled),r=client.get(url).send()=>r?};
         if response.status()!=reqwest::StatusCode::OK {return Err(Error::Http(response.status().as_u16()));}
         let expected=response.content_length();let mut completed=0;let mut stream=response.bytes_stream();
+        let mut last_progress=std::time::Instant::now();
         loop {
-            let chunk=tokio::select!{_ = cancel.cancelled()=>return Err(Error::Cancelled),r=stream.next()=>r};
+            let chunk=tokio::select!{_ = cancel.cancelled()=>return Err(Error::Cancelled),r=tokio::time::timeout(Duration::from_secs(30),stream.next())=>r.map_err(|_|Error::Network)?};
             let Some(chunk)=chunk else {break;};let chunk=chunk?;
-            file.write_all(&chunk).await?;completed+=chunk.len() as u64;let _=progress.send(completed);
+            file.write_all(&chunk).await?;completed+=chunk.len() as u64;if last_progress.elapsed() >= Duration::from_millis(100) { let _=progress.send(completed); last_progress=std::time::Instant::now(); }
         }
         if expected.is_some_and(|total|total!=completed){return Err(Error::Protocol);}
+        let _=progress.send(completed);
         file.sync_all().await?;Ok(())
     }.await;
     drop(file);
@@ -81,8 +85,17 @@ pub async fn save_queue(path: &Path, records: &[TransferRecord]) -> Result<()> {
     Ok(())
 }
 pub async fn load_queue(path: &Path) -> Result<Vec<TransferRecord>> {
+    // Bound bytes before parsing, even if a local file grows while being read.
+    let file = tokio::fs::File::open(path).await?;
+    let mut bytes = Vec::new();
+    file.take(MAX_QUEUE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .await?;
+    if bytes.len() as u64 > MAX_QUEUE_BYTES {
+        return Err(Error::Invalid("task history exceeds size limit"));
+    }
     let mut records: Vec<TransferRecord> =
-        serde_json::from_slice(&tokio::fs::read(path).await?).map_err(|_| Error::Protocol)?;
+        serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
     for record in &mut records {
         if matches!(record.phase, TransferPhase::Running | TransferPhase::Queued) {
             record.phase = TransferPhase::Interrupted;

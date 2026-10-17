@@ -10,7 +10,10 @@ use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
-use tokio::sync::{Semaphore, watch};
+use tokio::sync::{Notify, Semaphore, watch};
+
+pub const MAX_ACTIVE_TASKS: usize = 32;
+pub const MAX_HISTORY: usize = 200;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Default)]
@@ -28,6 +31,8 @@ struct Inner {
     writer: tokio::sync::Mutex<()>,
     slots: Semaphore,
     path: PathBuf,
+    idle: Notify,
+    changes: watch::Sender<()>,
 }
 impl TransferCenter {
     pub fn new(path: PathBuf) -> Self {
@@ -37,7 +42,12 @@ impl TransferCenter {
             writer: tokio::sync::Mutex::new(()),
             slots: Semaphore::new(2),
             path,
+            idle: Notify::new(),
+            changes: watch::channel(()).0,
         }))
+    }
+    pub fn subscribe(&self) -> watch::Receiver<()> {
+        self.0.changes.subscribe()
     }
     pub fn snapshot(&self) -> TransferSnapshot {
         self.0.state.lock().unwrap().clone()
@@ -47,7 +57,10 @@ impl TransferCenter {
             return Ok(());
         }
         let records = download::load_queue(&self.0.path).await?;
-        self.0.state.lock().unwrap().records = records;
+        let mut state = self.0.state.lock().unwrap();
+        state.records = records.into_iter().rev().take(MAX_HISTORY).collect();
+        state.records.reverse();
+        self.0.changes.send_replace(());
         Ok(())
     }
     async fn persist(&self) {
@@ -74,14 +87,18 @@ impl TransferCenter {
         }
     }
     pub async fn wait_idle(&self) {
-        while !self.0.cancellations.lock().unwrap().is_empty() {
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        loop {
+            let notified = self.0.idle.notified();
+            if self.0.cancellations.lock().unwrap().is_empty() {
+                return;
+            }
+            notified.await;
         }
     }
     /// Call on the background runtime; `url` must come from PikPak file details, never user text.
-    pub async fn run(&self, record: TransferRecord, url: String, directory: PathBuf) {
+    pub async fn run(&self, record: TransferRecord, url: String, directory: PathBuf) -> Result<()> {
         self.run_cancellable(record, url, directory, CancellationToken::new())
-            .await;
+            .await
     }
     pub async fn run_cancellable(
         &self,
@@ -89,15 +106,41 @@ impl TransferCenter {
         url: String,
         directory: PathBuf,
         cancel: CancellationToken,
-    ) {
+    ) -> Result<()> {
         let id = record.id.clone();
         let name = record.file_name.clone();
-        self.0
-            .cancellations
-            .lock()
-            .unwrap()
-            .insert(id.clone(), cancel.clone());
-        self.0.state.lock().unwrap().records.push(record);
+        {
+            let mut active = self.0.cancellations.lock().unwrap();
+            // Admission includes queued tasks. A duplicate must never replace a live token.
+            if active.len() >= MAX_ACTIVE_TASKS || active.contains_key(&id) {
+                return Err(Error::Invalid(
+                    "download queue is full or task is already active",
+                ));
+            }
+            let mut state = self.0.state.lock().unwrap();
+            if state.records.iter().any(|r| r.id == id) {
+                return Err(Error::Invalid("duplicate task ID"));
+            }
+            while state.records.len() >= MAX_HISTORY {
+                let Some(index) = state
+                    .records
+                    .iter()
+                    .position(|r| !active.contains_key(&r.id))
+                else {
+                    return Err(Error::Invalid("download history is full"));
+                };
+                let removed = state.records.remove(index);
+                state.errors.remove(&removed.id);
+                state.speeds.remove(&removed.id);
+            }
+            active.insert(id.clone(), cancel.clone());
+            state.records.push(record);
+        }
+        let _registration = Registration {
+            center: self.clone(),
+            id: id.clone(),
+        };
+        self.0.changes.send_replace(());
         self.persist().await;
         let result=async {
             if cancel.is_cancelled(){return Err(Error::Cancelled);}
@@ -117,6 +160,7 @@ impl TransferCenter {
                         {let mut state=self.0.state.lock().unwrap();
                         if let Some(record)=state.records.iter_mut().find(|r|r.id==id){record.completed=completed;}
                         state.speeds.insert(id.clone(),(completed as f64/started.elapsed().as_secs_f64().max(0.001)) as u64);}
+                        self.0.changes.send_replace(());
                     }
                 }
             }
@@ -130,13 +174,14 @@ impl TransferCenter {
                     Err(_) => TransferPhase::Failed,
                 };
             }
-            if let Err(error) = result {
+            if let Err(ref error) = result {
                 state.errors.insert(id.clone(), error.to_string());
             }
             state.speeds.remove(&id);
         }
         self.persist().await;
-        self.0.cancellations.lock().unwrap().remove(&id);
+        self.0.changes.send_replace(());
+        result
     }
     fn set_phase(&self, id: &str, phase: TransferPhase) {
         if let Some(record) = self
@@ -150,5 +195,136 @@ impl TransferCenter {
         {
             record.phase = phase;
         }
+    }
+}
+
+// Releases admission even when the enclosing future is dropped or aborted.
+struct Registration {
+    center: TransferCenter,
+    id: String,
+}
+impl Drop for Registration {
+    fn drop(&mut self) {
+        let mut active = self.center.0.cancellations.lock().unwrap();
+        active.remove(&self.id);
+        let mut state = self.center.0.state.lock().unwrap();
+        if let Some(record) = state.records.iter_mut().find(|r| r.id == self.id)
+            && matches!(record.phase, TransferPhase::Queued | TransferPhase::Running)
+        {
+            record.phase = TransferPhase::Interrupted;
+        }
+        state.speeds.remove(&self.id);
+        self.center.0.changes.send_replace(());
+        self.center.0.idle.notify_waiters();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn record(id: usize) -> TransferRecord {
+        TransferRecord {
+            id: id.to_string(),
+            file_id: "file".into(),
+            file_name: "test.bin".into(),
+            completed: 0,
+            total: None,
+            phase: TransferPhase::Queued,
+        }
+    }
+    #[tokio::test]
+    async fn abort_releases_registration_and_idle_waiters() {
+        let dir = tempfile::tempdir().unwrap();
+        let center = TransferCenter::new(dir.path().join("tasks.json"));
+        let _slots = center.0.slots.acquire_many(2).await.unwrap();
+        let mut changes = center.subscribe();
+        let worker = center.clone();
+        let path = dir.path().to_path_buf();
+        let job = tokio::spawn(async move {
+            worker
+                .run(record(0), "https://example.invalid".into(), path)
+                .await
+        });
+        changes.changed().await.unwrap();
+        assert_eq!(center.0.cancellations.lock().unwrap().len(), 1);
+        job.abort();
+        let _ = job.await;
+        tokio::time::timeout(std::time::Duration::from_secs(1), center.wait_idle())
+            .await
+            .unwrap();
+        assert_eq!(
+            center.snapshot().records[0].phase,
+            TransferPhase::Interrupted
+        );
+        assert!(center.snapshot().speeds.is_empty());
+    }
+    #[tokio::test]
+    async fn admission_is_bounded_and_duplicate_does_not_replace_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let center = TransferCenter::new(dir.path().join("tasks.json"));
+        let _slots = center.0.slots.acquire_many(2).await.unwrap();
+        let mut jobs = Vec::new();
+        for id in 0..MAX_ACTIVE_TASKS {
+            let mut changes = center.subscribe();
+            let worker = center.clone();
+            let path = dir.path().to_path_buf();
+            jobs.push(tokio::spawn(async move {
+                worker
+                    .run(record(id), "https://example.invalid".into(), path)
+                    .await
+            }));
+            changes.changed().await.unwrap();
+        }
+        assert!(
+            center
+                .run(
+                    record(MAX_ACTIVE_TASKS),
+                    "https://example.invalid".into(),
+                    dir.path().into()
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            center
+                .run(
+                    record(0),
+                    "https://example.invalid".into(),
+                    dir.path().into()
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(center.snapshot().records.len(), MAX_ACTIVE_TASKS);
+        center.cancel_all();
+        for job in jobs {
+            assert!(matches!(job.await.unwrap(), Err(Error::Cancelled)));
+        }
+        center.wait_idle().await;
+        assert!(center.0.cancellations.lock().unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn history_and_error_maps_remain_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let center = TransferCenter::new(dir.path().join("tasks.json"));
+        for id in 0..MAX_HISTORY + 5 {
+            assert!(
+                center
+                    .run(record(id), "http://invalid".into(), dir.path().into())
+                    .await
+                    .is_err()
+            );
+        }
+        let state = center.snapshot();
+        assert_eq!(state.records.len(), MAX_HISTORY);
+        assert_eq!(state.errors.len(), MAX_HISTORY);
+        assert_eq!(state.records[0].id, "5");
+        assert!(state.speeds.is_empty());
+        let mut changes = center.subscribe();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), changes.changed())
+                .await
+                .is_err()
+        );
     }
 }

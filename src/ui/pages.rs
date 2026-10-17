@@ -242,7 +242,7 @@ impl Mokawa {
                         };
                         center
                             .run_cancellable(record, details.web_content_link, directory,download_scope)
-                            .await;
+                            .await?;
                         Ok(())
                     });
                     this.page = Page::Tasks;
@@ -292,12 +292,18 @@ impl Mokawa {
             }
         })
         .detach();
+        let mut changes = self.transfers.subscribe();
+        let lifetime = self.lifetime.clone();
         cx.spawn(async move |this, cx| {
             loop {
-                let timer = cx
-                    .background_executor()
-                    .timer(std::time::Duration::from_millis(250));
-                timer.await;
+                tokio::select! {
+                    _ = lifetime.cancelled() => break,
+                    changed = changes.changed() => if changed.is_err() { break; },
+                }
+                // Coalesce network progress updates; no timer exists while idle.
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(100))
+                    .await;
                 if this
                     .update(cx, |this, cx| {
                         if this.page == Page::Tasks {

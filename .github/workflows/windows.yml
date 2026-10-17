@@ -64,6 +64,9 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: ./scripts/windows-smoke.ps1 -Executable "$env:LOCALAPPDATA/Programs/Mokawa/mokawa.exe"
+      - name: Sample idle resources and repeated window shutdown
+        shell: pwsh
+        run: ./scripts/windows-performance.ps1 -Executable "$env:LOCALAPPDATA/Programs/Mokawa/mokawa.exe" -Seconds 15 -Cycles 3
       - name: Verify silent uninstall
         if: always()
         shell: pwsh
@@ -84,6 +87,8 @@ jobs:
             dist/dependency-licenses.json
             dist/imports.txt
             dist/smoke-results.json
+            dist/performance.csv
+            dist/performance.json
             dist/*.png
             target/release/mokawa.exe
             target/release/mokawa-auth.exe

@@ -209,7 +209,7 @@ async fn queue_rejects_insecure_url_and_persists_failure_without_secrets() {
         total: None,
         phase: TransferPhase::Queued,
     };
-    center
+    let _ = center
         .run(
             record,
             "http://example.invalid/signed?secret=should-not-persist".into(),
@@ -285,7 +285,7 @@ async fn sign_out_cancels_download_before_worker_registration() {
         total: Some(42),
         phase: TransferPhase::Queued,
     };
-    center
+    let _ = center
         .run_cancellable(
             record,
             "https://example.invalid/not-requested".into(),
@@ -302,4 +302,16 @@ async fn sign_out_cancels_download_before_worker_registration() {
             .exists()
     );
     center.wait_idle().await;
+}
+
+#[tokio::test]
+async fn oversized_history_is_rejected_before_json_decode() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tasks.json");
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_len(mokawa::download::MAX_QUEUE_BYTES + 1).unwrap();
+    assert!(matches!(
+        mokawa::download::load_queue(&path).await,
+        Err(Error::Invalid(_))
+    ));
 }

@@ -3,6 +3,7 @@ mod pages;
 use gpui::{
     App, Application, Bounds, Context, Entity, KeyBinding, SharedString, Subscription,
     TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, size,
+    uniform_list,
 };
 use input::TextInput;
 use mokawa::transfers::TransferCenter;
@@ -22,6 +23,7 @@ struct Mokawa {
     browser: BrowserState,
     page: Page,
     transfers: TransferCenter,
+    lifetime: tokio_util::sync::CancellationToken,
     download_scope: tokio_util::sync::CancellationToken,
     hide_details: bool,
     ready: bool,
@@ -49,6 +51,7 @@ impl Drop for Mokawa {
         if let Some(task) = self.task.take() {
             task.abort();
         }
+        self.lifetime.cancel();
         self.download_scope.cancel();
         self.transfers.cancel_all();
     }
@@ -140,7 +143,7 @@ impl Render for Mokawa {
         }
         let files = self
             .browser
-            .visible(self.search.read(cx).content.as_ref(), self.descending);
+            .visible_indices(self.search.read(cx).content.as_ref(), self.descending);
         let selected = self
             .browser
             .files
@@ -188,64 +191,79 @@ impl Render for Mokawa {
                 "No matching files."
             }));
         }
-        for file in files {
-            let id = file.id.clone();
-            let name = file.name.clone();
-            let folder = file.is_folder();
-            let highlighted = self.browser.selected.contains(&id);
-            let row = div()
-                .id(SharedString::from(format!("file-{id}")))
-                .flex()
-                .items_center()
-                .gap_4()
-                .px_4()
-                .py_3()
-                .rounded_lg()
-                .cursor_pointer()
-                .bg(rgb(if highlighted { 0x30374f } else { 0x191c28 }))
-                .hover(|s| s.bg(rgb(0x292f42)))
-                .child(if folder { "▣" } else { "▤" })
-                .child(div().flex_1().min_w_0().truncate().child(file.name.clone()))
-                .child(div().text_sm().text_color(rgb(0xa3acc3)).child(if folder {
-                    "Folder".into()
-                } else {
-                    format!("{} bytes", file.size)
-                }))
-                .when(!self.grid, |row| {
-                    row.child(
-                        div()
-                            .w(px(185.))
-                            .text_sm()
-                            .text_color(rgb(0xa3acc3))
-                            .child(file.modified_time.clone()),
-                    )
-                })
-                .on_mouse_down(
-                    gpui::MouseButton::Left,
-                    cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
-                        if this.busy {
-                            return;
-                        }
-                        if event.click_count == 2 && folder {
-                            this.search.update(cx, |input, cx| {
-                                input.reset();
-                                cx.notify();
-                            });
-                            this.browser.path.push((id.clone(), name.clone()));
-                            this.request(Operation::List, cx);
+        let list = uniform_list(
+            "virtual-files",
+            files.len(),
+            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                let mut rows = Vec::with_capacity(range.len());
+                for index in range {
+                    let file = &this.browser.files[files[index]];
+                    let id = file.id.clone();
+                    let name = file.name.clone();
+                    let folder = file.is_folder();
+                    let highlighted = this.browser.selected.contains(&id);
+                    let row = div()
+                        .id(SharedString::from(format!("file-{id}")))
+                        .flex()
+                        .items_center()
+                        .gap_4()
+                        .px_4()
+                        .py_3()
+                        .rounded_lg()
+                        .cursor_pointer()
+                        .bg(rgb(if highlighted { 0x30374f } else { 0x191c28 }))
+                        .hover(|s| s.bg(rgb(0x292f42)))
+                        .child(if folder { "▣" } else { "▤" })
+                        .child(div().flex_1().min_w_0().truncate().child(file.name.clone()))
+                        .child(div().text_sm().text_color(rgb(0xa3acc3)).child(if folder {
+                            "Folder".into()
                         } else {
-                            if !event.modifiers.control {
-                                this.browser.selected.clear();
-                            }
-                            if !this.browser.selected.insert(id.clone()) {
-                                this.browser.selected.remove(&id);
-                            }
-                            cx.notify();
-                        }
-                    }),
-                );
-            content = content.child(row);
+                            format!("{} bytes", file.size)
+                        }))
+                        .when(!this.grid, |row| {
+                            row.child(
+                                div()
+                                    .w(px(185.))
+                                    .text_sm()
+                                    .text_color(rgb(0xa3acc3))
+                                    .child(file.modified_time.clone()),
+                            )
+                        })
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                                if this.busy {
+                                    return;
+                                }
+                                if event.click_count == 2 && folder {
+                                    this.search.update(cx, |input, cx| {
+                                        input.reset();
+                                        cx.notify();
+                                    });
+                                    this.browser.path.push((id.clone(), name.clone()));
+                                    this.request(Operation::List, cx);
+                                } else {
+                                    if !event.modifiers.control {
+                                        this.browser.selected.clear();
+                                    }
+                                    if !this.browser.selected.insert(id.clone()) {
+                                        this.browser.selected.remove(&id);
+                                    }
+                                    cx.notify();
+                                }
+                            }),
+                        );
+                    rows.push(row);
+                }
+                rows
+            }),
+        )
+        .flex_1()
+        .h_full();
+        if !self.browser.files.is_empty() {
+            content = content.child(list);
         }
+
         let sidebar = self.navigation(cx);
         let toolbar = div()
             .flex()
@@ -395,7 +413,12 @@ impl Render for Mokawa {
     }
 }
 pub fn run() {
-    let runtime = match tokio::runtime::Runtime::new() {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .max_blocking_threads(8)
+        .enable_all()
+        .build()
+    {
         Ok(r) => Arc::new(r),
         Err(_) => {
             tracing::error!("Could not initialize background runtime");
@@ -454,6 +477,7 @@ pub fn run() {
                             _ => Page::Login,
                         },
                         transfers: Mokawa::new_transfers(),
+                        lifetime: tokio_util::sync::CancellationToken::new(),
                         download_scope: tokio_util::sync::CancellationToken::new(),
                         hide_details: false,
                         ready: false,
