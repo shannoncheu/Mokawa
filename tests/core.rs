@@ -372,3 +372,22 @@ async fn theme_preferences_migrate_and_persist_all_modes() {
     assert!(!ThemeMode::Light.is_dark(true));
     assert!(ThemeMode::Dark.is_dark(false));
 }
+
+#[tokio::test]
+async fn oversized_metadata_response_is_rejected_without_exposing_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("s".repeat(4 * 1024 * 1024 + 1)))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let error = Api::for_mock(&server.uri())
+        .unwrap()
+        .list_files(&session(), "", false)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::Invalid("接口响应过大，请缩小请求范围")
+    ));
+}

@@ -28,6 +28,12 @@ it('一万条文件只挂载可见行，销毁时释放尺寸订阅', async () =
     expect(wrapper.findAll('.file-item').length).toBeLessThan(40)
     await wrapper.find('.file-item').trigger('click', { ctrlKey: true })
     expect(wrapper.emitted('select')?.[0]?.[1]).toBe(true)
+    const viewport = wrapper.find('.file-viewport')
+    Object.defineProperty(viewport.element, 'scrollTop', { value: 100_000, writable: true })
+    await viewport.trigger('scroll')
+    await wrapper.setProps({ files: files.slice(0, 1) })
+    expect(wrapper.findAll('.file-item')).toHaveLength(1)
+    expect(viewport.element.scrollTop).toBe(0)
     wrapper.unmount()
   }
   expect(disconnect).toHaveBeenCalledTimes(10)

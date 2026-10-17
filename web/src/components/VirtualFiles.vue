@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Folder, File, Image, Film, Music, Check } from '@lucide/vue'
 import { isFolder, formatBytes, formatDate, type CloudFile } from '../types'
 const props = defineProps<{ files: CloudFile[]; grid: boolean; selected: Set<string> }>()
@@ -30,6 +30,14 @@ const rows = computed(() =>
       return { index, files: props.files.slice(index * columns.value, (index + 1) * columns.value) }
     },
   ),
+)
+watch(
+  [() => props.files, () => props.grid],
+  () => {
+    scroll.value = 0
+    if (viewport.value) viewport.value.scrollTop = 0
+  },
+  { flush: 'post' },
 )
 let observer: ResizeObserver | undefined
 onMounted(() => {

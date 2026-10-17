@@ -62,11 +62,28 @@ impl Api {
             ("filters", json!({"trashed":{"eq":trashed}}).to_string()),
         ];
         let mut files = Vec::new();
+        let mut metadata_bytes = 0usize;
         let mut seen = std::collections::HashSet::new();
         for _ in 0..1000 {
             let page: FilePage = self
                 .drive_request(session, Method::GET, "/drive/v1/files", &query, None)
                 .await?;
+            for file in &page.files {
+                metadata_bytes = metadata_bytes.saturating_add(
+                    file.id.len()
+                        + file.name.len()
+                        + file.parent_id.len()
+                        + file.kind.len()
+                        + file.modified_time.len()
+                        + file.mime_type.len()
+                        + file.web_content_link.len(),
+                );
+            }
+            if files.len().saturating_add(page.files.len()) > 100_000
+                || metadata_bytes > 64 * 1024 * 1024
+            {
+                return Err(Error::Invalid("目录数据过多，请使用更小的文件夹"));
+            }
             files.extend(page.files);
             if page.next_page_token.is_empty() {
                 return Ok(files);

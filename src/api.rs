@@ -76,7 +76,7 @@ impl Api {
         }
         Self::decode(request.send().await?).await
     }
-    async fn decode<T: DeserializeOwned>(response: reqwest::Response) -> Result<T> {
+    async fn decode<T: DeserializeOwned>(mut response: reqwest::Response) -> Result<T> {
         match response.status().as_u16() {
             401 => return Err(Error::Unauthorized),
             429 => return Err(Error::RateLimited),
@@ -84,7 +84,23 @@ impl Api {
             200..=299 => {}
             s => return Err(Error::Http(s)),
         }
-        let value: serde_json::Value = response.json().await.map_err(|_| Error::Protocol)?;
+        // Metadata is bounded independently of streaming file downloads. Do not trust Content-Length.
+        const MAX_RESPONSE: usize = 4 * 1024 * 1024;
+        if response
+            .content_length()
+            .is_some_and(|size| size > MAX_RESPONSE as u64)
+        {
+            return Err(Error::Invalid("接口响应过大，请缩小请求范围"));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if chunk.len() > MAX_RESPONSE - bytes.len() {
+                return Err(Error::Invalid("接口响应过大，请缩小请求范围"));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
         if value
             .get("error_code")
             .is_some_and(|c| c.as_i64() != Some(0))
