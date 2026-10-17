@@ -77,6 +77,9 @@ const booting = ref(true)
 const status = ref('')
 const files = shallowRef<CloudFile[]>([])
 const selected = shallowRef(new Set<string>())
+const activeFileId = ref<string | null>(null)
+const selectionAnchor = ref<string | null>(null)
+const selectionMode = ref(false)
 const quota = ref<DriveQuota | null>(null)
 const quotaLoading = ref(false)
 const quotaError = ref(false)
@@ -89,6 +92,8 @@ const grid = ref(false)
 const detail = ref(false)
 const accountMenu = ref(false)
 const menu = ref<{ x: number; y: number } | null>(null)
+const contextFileId = ref<string | null>(null)
+const contextMenu = ref<HTMLElement>()
 const tasks = shallowRef<Transfers>({
   records: [],
   errors: {},
@@ -181,9 +186,34 @@ const filteredCloudTasks = computed(() => {
 const recentTasks = computed(() => [...tasks.value.records].reverse().slice(0, 3))
 const commonFolders = computed(() => files.value.filter(isFolder).slice(0, 6))
 const { visible, indexing } = useFileView(files, debouncedQuery, descending, notify)
-const currentFile = computed(() =>
-  selected.value.size === 1 ? files.value.find((file) => selected.value.has(file.id)) : undefined,
-)
+const currentFile = computed(() => {
+  if (selected.value.size > 1) return undefined
+  const id = selected.value.size === 1 ? [...selected.value][0] : activeFileId.value
+  return files.value.find((file) => file.id === id)
+})
+const contextFile = computed(() => files.value.find((file) => file.id === contextFileId.value))
+function contextOpenLabel(file: CloudFile) {
+  if (isFolder(file)) return '打开文件夹'
+  const ext = file.name.split('.').at(-1)?.toLowerCase() || ''
+  if (file.mime_type.startsWith('video/') || ['mp4', 'webm', 'mov', 'm4v'].includes(ext))
+    return '播放视频'
+  if (
+    file.mime_type.startsWith('audio/') ||
+    ['mp3', 'm4a', 'aac', 'ogg', 'wav', 'flac'].includes(ext)
+  )
+    return '播放音频'
+  if (
+    file.mime_type.startsWith('image/') ||
+    ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif'].includes(ext)
+  )
+    return '预览图片'
+  if (
+    file.mime_type.startsWith('text/') ||
+    ['txt', 'md', 'json', 'csv', 'log', 'yaml', 'yml', 'xml'].includes(ext)
+  )
+    return '预览文本'
+  return '查看详情'
+}
 const previewKind = computed(() => {
   const file = currentFile.value
   if (!file || isFolder(file)) return 'other'
@@ -418,18 +448,88 @@ async function deleteShare(share: Share) {
     report(error)
   }
 }
-function select(file: CloudFile, multi: boolean) {
-  const next = multi ? new Set(selected.value) : new Set<string>()
-  if (multi && next.has(file.id)) next.delete(file.id)
+function select(
+  file: CloudFile,
+  modifiers: { multi: boolean; range: boolean } = { multi: false, range: false },
+) {
+  const next = modifiers.multi ? new Set(selected.value) : new Set<string>()
+  const anchorId = selectionAnchor.value
+  if (modifiers.range && anchorId) {
+    const anchorIndex = visible.value.findIndex((row) => row.id === anchorId)
+    const fileIndex = visible.value.findIndex((row) => row.id === file.id)
+    if (anchorIndex >= 0 && fileIndex >= 0) {
+      for (
+        let index = Math.min(anchorIndex, fileIndex);
+        index <= Math.max(anchorIndex, fileIndex);
+        index++
+      )
+        next.add(visible.value[index].id)
+      selected.value = next
+      return
+    }
+  }
+  if (modifiers.multi && next.has(file.id)) next.delete(file.id)
   else next.add(file.id)
   selected.value = next
+  selectionAnchor.value = file.id
 }
-function context(file: CloudFile, event: MouseEvent) {
-  if (!selected.value.has(file.id)) select(file, false)
+async function context(file: CloudFile, event: MouseEvent | KeyboardEvent) {
+  if (!selected.value.has(file.id)) select(file)
+  contextFileId.value = file.id
+  const position =
+    event instanceof MouseEvent
+      ? { x: event.clientX, y: event.clientY }
+      : (() => {
+          const rect = document.activeElement?.getBoundingClientRect()
+          return { x: rect?.left || 8, y: rect?.bottom || 48 }
+        })()
   menu.value = {
-    x: Math.max(8, Math.min(event.clientX, window.innerWidth - 195)),
-    y: Math.max(48, Math.min(event.clientY, window.innerHeight - 245)),
+    x: Math.max(8, Math.min(position.x, window.innerWidth - 230)),
+    y: Math.max(48, Math.min(position.y, window.innerHeight - 290)),
   }
+  await nextTick()
+  contextMenu.value?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
+}
+function openContextFile() {
+  const file = contextFile.value
+  menu.value = null
+  if (!file) return
+  selected.value = new Set()
+  selectionAnchor.value = null
+  activeFileId.value = file.id
+  openFile(file)
+}
+function detailsContextFile() {
+  const file = contextFile.value
+  if (!file) return
+  selected.value = new Set()
+  selectionAnchor.value = null
+  activeFileId.value = file.id
+  detail.value = true
+  menu.value = null
+  recordVisit(file)
+}
+function renameContextFile() {
+  const file = contextFile.value
+  if (!file) return
+  selected.value = new Set([file.id])
+  selectionAnchor.value = file.id
+  void edit('rename')
+}
+function contextMenuKeydown(event: KeyboardEvent) {
+  const buttons = [
+    ...(contextMenu.value?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') || []),
+  ]
+  if (!buttons.length || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+  const next =
+    event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? buttons.length - 1
+        : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
+  buttons[next]?.focus()
 }
 function report(error: unknown) {
   const message = errorMessage(error)
@@ -460,6 +560,8 @@ async function load() {
   const generation = ++requestGeneration
   files.value = []
   selected.value = new Set()
+  activeFileId.value = null
+  selectionAnchor.value = null
   busy.value = true
   status.value = '正在读取 PikPak 文件…'
   try {
@@ -514,11 +616,16 @@ function quotaLabel() {
 function openFile(file: CloudFile) {
   recordVisit(file)
   if (isFolder(file)) {
+    activeFileId.value = null
+    selected.value = new Set()
+    selectionAnchor.value = null
     path.value.push({ id: file.id, name: file.name })
     query.value = ''
     void load()
   } else {
-    select(file, false)
+    selected.value = new Set()
+    selectionAnchor.value = null
+    activeFileId.value = file.id
     detail.value = true
   }
 }
@@ -826,7 +933,24 @@ function key(event: KeyboardEvent) {
   if (event.key === 'Escape') {
     if (!writing.value) dialog.value = null
     menu.value = null
+    contextFileId.value = null
     accountMenu.value = false
+    if (!dialog.value && !menu.value && selected.value.size) {
+      selected.value = new Set()
+      selectionAnchor.value = null
+    }
+  }
+  const target = event.target as HTMLElement | null
+  const editing = !!target?.closest('input, textarea, select, [contenteditable="true"]')
+  if (
+    !editing &&
+    (event.ctrlKey || event.metaKey) &&
+    event.key.toLowerCase() === 'a' &&
+    page.value === 'files'
+  ) {
+    event.preventDefault()
+    selected.value = new Set(visible.value.map((file) => file.id))
+    selectionAnchor.value = visible.value[0]?.id || null
   }
   if (event.key === 'F5') {
     event.preventDefault()
@@ -924,6 +1048,7 @@ onBeforeUnmount(() => {
 })
 function closeMenus() {
   menu.value = null
+  contextFileId.value = null
   accountMenu.value = false
 }
 function showDetails() {
@@ -931,9 +1056,14 @@ function showDetails() {
   detail.value = true
   menu.value = null
 }
-function showMoveUnavailable() {
-  unavailable('移动与复制')
+function contextFavorite() {
+  const file = contextFile.value
   menu.value = null
+  if (file) void toggleFavorite(file)
+}
+function contextShare() {
+  menu.value = null
+  createShare()
 }
 </script>
 <template>
@@ -959,7 +1089,9 @@ function showMoveUnavailable() {
         @pointerup="titlebarPointerEnd"
         @pointercancel="titlebarPointerEnd"
         @dblclick="windowAction('toggleMaximize')"
-      />
+      >
+        <b class="titlebar-name">Mokawa</b>
+      </div>
       <span v-if="!desktop" class="preview-badge">浏览器预览 · 不连接网盘</span>
       <div class="window-controls">
         <button aria-label="最小化" @click="windowAction('minimize')"><Minus :size="15" /></button
@@ -1099,6 +1231,17 @@ function showMoveUnavailable() {
           <button class="text-button" disabled title="等待 PikPak 为 Mokawa 明确桌面客户端授权契约">
             使用 PikPak 浏览器授权（尚未开放）
           </button>
+          <button
+            class="text-button"
+            disabled
+            title="密码登录需要 Mokawa 专用的 PikPak 客户端注册信息"
+          >
+            用户名/邮箱与密码登录（尚不可用）
+          </button>
+          <small class="privacy"
+            >PikPak 密码接口需要经授权的客户端身份及安全验证流程。Mokawa
+            尚未取得该注册信息，因此不会收集或提交你的密码。</small
+          >
           <div class="local-history-links">
             <button class="text-button" @click="route('recent')">
               <Clock3 :size="15" />查看本机最近访问
@@ -1820,6 +1963,14 @@ function showMoveUnavailable() {
           <button class="icon-button" aria-label="显示文件详情" @click="detail = !detail">
             <Ellipsis :size="19" />
           </button>
+          <button
+            class="selection-mode-button"
+            :class="{ active: selectionMode }"
+            :aria-pressed="selectionMode"
+            @click="selectionMode = !selectionMode"
+          >
+            多选
+          </button>
         </div>
         <div v-if="selected.size" class="selection-toolbar">
           <b>已选择 {{ selected.size }} 项</b
@@ -1837,6 +1988,7 @@ function showMoveUnavailable() {
           :files="visible"
           :grid="grid"
           :selected="selected"
+          :selection-mode="selectionMode"
           @select="select"
           @open="openFile"
           @menu="context"
@@ -1968,17 +2120,27 @@ function showMoveUnavailable() {
       ><button v-else @click="route('login')">连接 PikPak 账号</button>
     </div>
     <div
-      v-if="menu"
+      v-if="menu && contextFile"
+      ref="contextMenu"
       class="file-context popup"
+      role="menu"
+      aria-label="文件操作"
       :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
       @click.stop
+      @keydown="contextMenuKeydown"
     >
-      <button @click="download"><Download :size="16" />下载</button
-      ><button @click="edit('rename')">重命名</button><button @click="showDetails">文件详情</button
-      ><button @click="currentFile && toggleFavorite(currentFile)">
-        <Star :size="15" />{{ currentFile?.starred ? '取消收藏' : '加入收藏' }}</button
-      ><button @click="showMoveUnavailable">移动与复制（尚未接入）</button
-      ><button class="danger-text" @click="edit('trash')"><Trash2 :size="16" />移入回收站</button>
+      <button role="menuitem" @click="openContextFile">{{ contextOpenLabel(contextFile) }}</button>
+      <button v-if="!isFolder(contextFile)" role="menuitem" @click="download">
+        <Download :size="16" />下载
+      </button>
+      <button role="menuitem" @click="renameContextFile">重命名</button>
+      <button role="menuitem" @click="contextFavorite">
+        <Star :size="15" />{{ contextFile.starred ? '取消收藏' : '加入收藏' }}</button
+      ><button role="menuitem" @click="contextShare"><Share2 :size="15" />分享</button
+      ><button role="menuitem" @click="detailsContextFile">文件详情</button
+      ><button role="menuitem" class="danger-text" @click="edit('trash')">
+        <Trash2 :size="16" />移入回收站
+      </button>
     </div>
     <div v-if="dialog" class="modal-backdrop" @click.self="!writing && (dialog = null)">
       <form
