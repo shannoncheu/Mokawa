@@ -15,8 +15,10 @@ $installer = Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundl
 if (!$installer) { throw 'Tauri installer missing' }
 $portable = 'src-tauri/target/x86_64-pc-windows-msvc/release/mokawa.exe'
 if (!(Test-Path $portable)) { throw 'Tauri portable executable missing' }
-Set-Stage 'portable-executable-window-controls'
-./scripts/windows-tauri-controls.ps1 -Executable $portable
+Set-Stage 'portable-executable-webview'
+$env:MOKAWA_TEST_EXECUTABLE = (Resolve-Path $portable).Path
+$portableTest = Start-Process (Get-Command node).Source -ArgumentList 'scripts/tauri-desktop-test.mjs' -NoNewWindow -PassThru
+Wait-Child $portableTest 180000 'Standalone executable WebView2 acceptance'
 $root = "$env:LOCALAPPDATA\Programs\Mokawa-Vue-Test"
 Set-Stage 'install'
 $setup = Start-Process $installer.FullName -ArgumentList '/S',"/D=$root" -PassThru
