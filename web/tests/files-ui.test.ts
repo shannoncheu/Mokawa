@@ -286,27 +286,71 @@ it('视频详情调用专用媒体链接解析器，关闭侧栏时取消预览'
   expect(transport.call.mock.calls.some((args) => args[0] === 'cancel_preview')).toBe(true)
   wrapper.unmount()
 })
-it('不会收集或提交不受支持的用户名密码登录', async () => {
-  const original = transport.call.getMockImplementation()!
-  transport.call.mockImplementation(async (command: string, ...args: unknown[]) => {
+it('账号密码经本机 Rust 命令提交，失败后清空密码且不假装登录成功', async () => {
+  transport.call.mockImplementation(async (command: string) => {
     if (command === 'bootstrap')
       return {
         appearance: { settings: defaults(), avatar: null, background: null, warnings: [] },
         hasSession: false,
         canClearSession: false,
         authMethod: null,
+        authorizationReady: true,
         warning: null,
       }
-    return original(command, ...args)
+    if (command === 'transfer_snapshot')
+      return { records: [], errors: {}, speeds: {}, persistence_error: null }
+    if (command === 'login_with_password')
+      throw { code: 'http', message: 'PikPak 请求失败（401）。' }
+    if (command === 'cancel_page' || command === 'cancel_preview') return undefined
   })
   const wrapper = mount(App, { attachTo: document.body })
   await flushPromises()
-  const passwordOption = wrapper
+  await wrapper.find('#pikpak-username').setValue('user@example.test')
+  await wrapper.find('#pikpak-password').setValue('secret-password')
+  await wrapper
     .findAll('button')
-    .find((button) => button.text().includes('用户名/邮箱与密码登录'))!
-  expect(passwordOption.attributes('disabled')).toBeDefined()
-  expect(wrapper.text()).toContain('官方 CLI 已说明密码登录不再支持')
-  expect(wrapper.findAll('input[type="password"]')).toHaveLength(1)
-  expect(wrapper.find('input[type="password"]').attributes('id')).toBe('personal-access-token')
+    .find((button) => button.text().includes('使用账号密码登录'))!
+    .trigger('click')
+  await flushPromises()
+  expect(transport.call).toHaveBeenCalledWith('login_with_password', {
+    username: 'user@example.test',
+    password: 'secret-password',
+  })
+  expect((wrapper.find('#pikpak-password').element as HTMLInputElement).value).toBe('')
+  expect(wrapper.find('.files-page').exists()).toBe(false)
+  expect(wrapper.text()).toContain('PikPak 请求失败（401）')
+  wrapper.unmount()
+})
+it('客户端注册 Secret 通过 Rust 命令保存后清空输入', async () => {
+  transport.call.mockImplementation(async (command: string) => {
+    if (command === 'bootstrap')
+      return {
+        appearance: { settings: defaults(), avatar: null, background: null, warnings: [] },
+        hasSession: false,
+        canClearSession: false,
+        authMethod: null,
+        authorizationReady: false,
+        warning: null,
+      }
+    if (command === 'transfer_snapshot')
+      return { records: [], errors: {}, speeds: {}, persistence_error: null }
+    if (command === 'save_password_client_registration') return undefined
+    if (command === 'cancel_page' || command === 'cancel_preview') return undefined
+  })
+  const wrapper = mount(App, { attachTo: document.body })
+  await flushPromises()
+  await wrapper.find('#pikpak-client-id').setValue('officially-issued-id')
+  await wrapper.find('#pikpak-client-secret').setValue('registration-secret')
+  await wrapper
+    .findAll('button')
+    .find((button) => button.text().includes('保存到 Windows 凭据管理器'))!
+    .trigger('click')
+  await flushPromises()
+  expect(transport.call).toHaveBeenCalledWith('save_password_client_registration', {
+    clientId: 'officially-issued-id',
+    clientSecret: 'registration-secret',
+  })
+  expect((wrapper.find('#pikpak-client-secret').element as HTMLInputElement).value).toBe('')
+  expect(wrapper.text()).toContain('客户端注册信息已安全保存')
   wrapper.unmount()
 })

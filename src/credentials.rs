@@ -1,5 +1,5 @@
 use crate::{
-    auth::Session,
+    auth::{Registration, Session},
     error::{Error, Result},
 };
 use std::sync::{
@@ -26,6 +26,12 @@ pub fn save_if_current(session: &Session, epoch: u64) -> Result<()> {
 pub fn save(session: &Session) -> Result<()> {
     save_if_current(session, generation())
 }
+pub fn save_registration(registration: &Registration) -> Result<()> {
+    save_registration_unlocked(registration)
+}
+pub fn load_registration() -> Result<Option<Registration>> {
+    load_registration_unlocked()
+}
 pub fn delete() -> Result<()> {
     let _guard = SESSION_WRITE.lock().map_err(|_| Error::Credentials)?;
     SESSION_GENERATION.fetch_add(1, Ordering::SeqCst);
@@ -34,6 +40,40 @@ pub fn delete() -> Result<()> {
 #[cfg(windows)]
 fn entry() -> Result<keyring::Entry> {
     keyring::Entry::new(crate::settings::APP_ID, "pikpak-session").map_err(|_| Error::Credentials)
+}
+#[cfg(windows)]
+fn registration_entry() -> Result<keyring::Entry> {
+    keyring::Entry::new(crate::settings::APP_ID, "pikpak-client-registration")
+        .map_err(|_| Error::Credentials)
+}
+#[cfg(windows)]
+fn save_registration_unlocked(registration: &Registration) -> Result<()> {
+    use secrecy::ExposeSecret;
+    let json = serde_json::json!({
+        "client_id": registration.client_id,
+        "client_secret": registration.client_secret.expose_secret(),
+    })
+    .to_string();
+    registration_entry()?
+        .set_password(&json)
+        .map_err(|_| Error::Credentials)
+}
+#[cfg(windows)]
+fn load_registration_unlocked() -> Result<Option<Registration>> {
+    #[derive(serde::Deserialize)]
+    struct StoredRegistration {
+        client_id: String,
+        client_secret: secrecy::SecretString,
+    }
+    let entry = registration_entry()?;
+    let raw = match entry.get_password() {
+        Ok(raw) => raw,
+        Err(keyring::Error::NoEntry) => return Ok(None),
+        Err(_) => return Err(Error::Credentials),
+    };
+    let stored: StoredRegistration =
+        serde_json::from_str(&raw).map_err(|_| Error::InvalidSession)?;
+    Registration::from_values(stored.client_id, stored.client_secret).map(Some)
 }
 #[cfg(windows)]
 fn save_unlocked(session: &Session) -> Result<()> {
@@ -60,6 +100,14 @@ fn delete_unlocked() -> Result<()> {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(_) => Err(Error::Credentials),
     }
+}
+#[cfg(not(windows))]
+fn save_registration_unlocked(_: &Registration) -> Result<()> {
+    Err(Error::Credentials)
+}
+#[cfg(not(windows))]
+fn load_registration_unlocked() -> Result<Option<Registration>> {
+    Ok(None)
 }
 #[cfg(not(windows))]
 fn save_unlocked(_: &Session) -> Result<()> {

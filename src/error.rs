@@ -2,8 +2,8 @@
 pub enum Error {
     #[error("会话已过期，请重新登录。")]
     Unauthorized,
-    #[error("PikPak 要求安全验证，请在官方页面完成验证后重试。")]
-    VerificationRequired,
+    #[error("PikPak 要求安全验证。")]
+    VerificationRequired(Option<String>),
     #[error("PikPak 拒绝此操作；账号连接仍有效。请检查 PikPak 权限或安全验证提示。")]
     AccessDenied,
     #[error("请求过于频繁，请稍后重试。")]
@@ -32,7 +32,9 @@ pub enum Error {
     NoSession,
     #[error("保存的会话数据已损坏，请清除会话后重新授权。 ")]
     InvalidSession,
-    #[error("尚未取得 Mokawa 专用的 PikPak 客户端注册信息，暂时无法授权。")]
+    #[error(
+        "缺少获授权的 PikPak 客户端注册凭据。请仅配置 PikPak 官方为你签发的客户端 ID 和 Secret。"
+    )]
     ClientRegistrationRequired,
     #[error("PikPak 授权尚未接入：Mokawa 的客户端注册与回调规则仍待确认，当前无法登录。")]
     AuthorizationPending,

@@ -2198,6 +2198,7 @@ dependencies = [
  "fs2",
  "mokawa",
  "rfd",
+ "secrecy",
  "serde",
  "serde_json",
  "tauri",
@@ -2206,6 +2207,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "uuid",
  "webbrowser",
 ]
 
