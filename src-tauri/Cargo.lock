@@ -2198,6 +2198,7 @@ dependencies = [
  "fs2",
  "mokawa",
  "rfd",
+ "secrecy",
  "serde",
  "serde_json",
  "tauri",
