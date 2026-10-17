@@ -14,7 +14,7 @@ const appearance=useAppearance(notify);const {settings,avatar,background,dark,st
 const hasSavedSession=ref(false);const modal=ref<HTMLFormElement>();let returnFocus:HTMLElement|null=null
 const page=ref('login');const authenticated=ref(false);const busy=ref(false);const booting=ref(true);const status=ref('');const files=shallowRef<CloudFile[]>([]);const selected=shallowRef(new Set<string>());const path=ref<{id:string;name:string}[]>([]);const query=ref('');const debouncedQuery=ref('');const descending=ref(false);const grid=ref(false);const detail=ref(false);const accountMenu=ref(false);const menu=ref<{x:number;y:number}|null>(null)
 const tasks=shallowRef<Transfers>({records:[],errors:{},speeds:{},persistence_error:null})
-const dialog=ref<'folder'|'rename'|'trash'|null>(null);const newName=ref('');const writing=ref(false);const nameInput=ref<HTMLInputElement>();let requestGeneration=Date.now();let disposed=false;let queryTimer:ReturnType<typeof setTimeout>|undefined;let resizedObserver:UnlistenFn|undefined;let taskObserver:UnlistenFn|undefined;let closeObserver:UnlistenFn|undefined;let closing=false;const maximized=ref(false)
+const dialog=ref<'folder'|'rename'|'trash'|null>(null);const newName=ref('');const writing=ref(false);const nameInput=ref<HTMLInputElement>();let requestGeneration=Date.now();let disposed=false;let queryTimer:ReturnType<typeof setTimeout>|undefined;let resizedObserver:UnlistenFn|undefined;let taskObserver:UnlistenFn|undefined;let closeObserver:UnlistenFn|undefined;let closeFlush:Promise<void>|undefined;const maximized=ref(false)
 const navigation=[{id:'home',label:'首页',icon:Home},{id:'files',label:'我的文件',icon:Folder},{id:'recent',label:'最近访问',icon:Clock3},{id:'favorites',label:'收藏',icon:Star},{id:'offline',label:'离线下载',icon:Download},{id:'shares',label:'分享管理',icon:Share2},{id:'trash',label:'回收站',icon:Trash2}]
 const visible=computed(()=>{const text=debouncedQuery.value.toLocaleLowerCase();return files.value.filter(file=>file.name.toLocaleLowerCase().includes(text)).sort((a,b)=>Number(isFolder(b))-Number(isFolder(a))||(descending.value?-1:1)*a.name.localeCompare(b.name,'zh-CN',{numeric:true}))})
 const currentFile=computed(()=>selected.value.size===1?files.value.find(file=>selected.value.has(file.id)):undefined)
@@ -38,7 +38,7 @@ async function confirm(){if(writing.value)return;writing.value=true;try{if(dialo
 async function download(){menu.value=null;if(!currentFile.value||isFolder(currentFile.value)){notify('请选择一个文件下载。');return}try{const task=await call<string|null>('start_download',{id:currentFile.value.id});if(task){page.value='tasks';notify('已加入下载队列。')}}catch(error){report(error)}}
 function unavailable(feature:string){notify(`${feature}尚未接入，当前无法操作。`)}
 async function windowAction(action:'minimize'|'toggleMaximize'|'close'){if(!desktop){notify('窗口控制仅在 Windows 桌面版本可用。');return}try{if(action==='close')await appearance.flush();await getCurrentWindow()[action]()}catch(error){notify(errorMessage(error))}}
-function drag(event:MouseEvent){if(event.button===0&&event.detail===1&&desktop)void getCurrentWindow().startDragging().catch(()=>{})}
+
 function key(event:KeyboardEvent){if(event.key==='Escape'){if(!writing.value)dialog.value=null;menu.value=null;accountMenu.value=false}if(event.key==='F5'&&authenticated.value){event.preventDefault();void load()}}
 let taskRevision=0
 onMounted(async()=>{
@@ -58,7 +58,7 @@ onMounted(async()=>{
     if(desktop){
       const resize=await getCurrentWindow().onResized(async()=>{const value=await getCurrentWindow().isMaximized();if(!disposed)maximized.value=value})
       if(disposed){resize();return}resizedObserver=resize
-      const close=await getCurrentWindow().onCloseRequested(async event=>{if(closing)return;event.preventDefault();closing=true;await appearance.flush();await getCurrentWindow().close()})
+      const close=await getCurrentWindow().onCloseRequested(async()=>{closeFlush??=appearance.flush();await closeFlush})
       if(disposed){close();return}closeObserver=close
       maximized.value=await getCurrentWindow().isMaximized()
     }
@@ -69,7 +69,7 @@ onBeforeUnmount(()=>{disposed=true;requestGeneration++;window.removeEventListene
 <template>
 <div class="app" :data-theme="dark?'dark':'light'" :class="{'reduce-motion':settings.reducedMotion}" :style="style" @click="menu=null;accountMenu=false">
   <Transition name="background-cross"><div :key="background" class="background-layer" :style="{backgroundImage:background?`url(${background})`:'none'}"/></Transition><div class="background-overlay"/>
-  <header class="titlebar"><div class="titlebar-drag" @mousedown="drag" @dblclick="windowAction('toggleMaximize')"><i class="brand-mark">M</i><b>Mokawa</b></div><span v-if="!desktop" class="preview-badge">浏览器预览 · 不连接网盘</span><div class="window-controls"><button aria-label="最小化" @click="windowAction('minimize')"><Minus :size="15"/></button><button :aria-label="maximized?'还原窗口':'最大化'" @click="windowAction('toggleMaximize')"><Copy v-if="maximized" :size="13"/><Square v-else :size="13"/></button><button class="close" aria-label="关闭窗口" @click="windowAction('close')"><X :size="17"/></button></div></header>
+  <header class="titlebar"><div class="titlebar-drag" data-tauri-drag-region="deep"><i class="brand-mark">M</i><b>Mokawa</b></div><span v-if="!desktop" class="preview-badge">浏览器预览 · 不连接网盘</span><div class="window-controls"><button aria-label="最小化" @click="windowAction('minimize')"><Minus :size="15"/></button><button :aria-label="maximized?'还原窗口':'最大化'" @click="windowAction('toggleMaximize')"><Copy v-if="maximized" :size="13"/><Square v-else :size="13"/></button><button class="close" aria-label="关闭窗口" @click="windowAction('close')"><X :size="17"/></button></div></header>
   <div v-if="booting" class="boot"><LoaderCircle class="spin"/><span>正在打开 Mokawa…</span></div>
   <main v-else class="workspace" :inert="dialog!==null">
     <aside v-if="page!=='login'" class="sidebar panel"><nav aria-label="主导航"><button v-for="item in navigation" :key="item.id" :class="{active:page===item.id}" @click="route(item.id)"><component :is="item.icon" :size="18"/>{{item.label}}</button><div class="nav-caption">传输与应用</div><button :class="{active:page==='tasks'}" @click="route('tasks')"><Download :size="18"/>任务中心<span v-if="tasks.records.some(t=>t.phase==='Running')" class="activity-dot"/></button><button :class="{active:page==='settings'}" @click="route('settings')"><Settings2 :size="18"/>设置</button></nav>

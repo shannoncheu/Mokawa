@@ -1,1 +1,17 @@
-{"identifier":"main-window","description":"仅主窗口的必要窗口控制和任务事件","windows":["main"],"permissions":["core:event:default","core:window:allow-start-dragging","core:window:allow-minimize","core:window:allow-toggle-maximize","core:window:allow-close","core:window:allow-is-maximized"]}
+{
+  "identifier": "main-window",
+  "description": "仅主窗口的必要窗口控制和任务事件",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-is-maximized",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-destroy"
+  ]
+}
