@@ -1,5 +1,5 @@
 //! One process-wide palette; Mokawa has one main window. No timer or retained Entity.
-use gpui::{Rgb, WindowAppearance};
+use gpui::{Rgba, WindowAppearance};
 use mokawa::settings::ThemeMode;
 use std::sync::atomic::{AtomicBool, Ordering};
 static DARK: AtomicBool = AtomicBool::new(false);
@@ -12,7 +12,7 @@ pub fn apply(mode: ThemeMode, appearance: WindowAppearance) {
         Ordering::Relaxed,
     );
 }
-pub fn color(dark: u32) -> Rgb {
+pub fn color(dark: u32) -> Rgba {
     if DARK.load(Ordering::Relaxed) {
         return gpui::rgb(dark);
     }

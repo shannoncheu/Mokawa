@@ -715,6 +715,8 @@ pub fn run() {
                     view.appearance_subscription =
                         Some(cx.observe_window_appearance(window, |this, window, cx| {
                             theme::apply(this.theme_mode, window.appearance());
+                            this.search.update(cx, |_, cx| cx.notify());
+                            this.name.update(cx, |_, cx| cx.notify());
                             cx.notify();
                         }));
                     view.start_background(cx);
