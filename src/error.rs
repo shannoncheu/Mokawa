@@ -4,7 +4,7 @@ pub enum Error {
     Unauthorized,
     #[error("PikPak 要求安全验证，请在官方页面完成验证后重试。")]
     VerificationRequired,
-    #[error("PikPak 拒绝访问。请检查令牌权限，或按 PikPak 官方提示完成安全验证。")]
+    #[error("PikPak 拒绝此操作；账号连接仍有效。请检查 PikPak 权限或安全验证提示。")]
     AccessDenied,
     #[error("请求过于频繁，请稍后重试。")]
     RateLimited,
@@ -16,6 +16,10 @@ pub enum Error {
     Network,
     #[error("PikPak 返回了无法识别的数据。")]
     Protocol,
+    #[error("PikPak 响应格式异常（HTTP {status}，Content-Type: {content_type}）；响应正文未记录。")]
+    ProtocolResponse { status: u16, content_type: String },
+    #[error("此个人访问令牌不具备该操作所需权限。账号连接仍有效。")]
+    UnsupportedPermission,
     #[error("输入无效：{0}")]
     Invalid(&'static str),
     #[error("操作已取消。")]

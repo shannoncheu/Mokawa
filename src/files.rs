@@ -2,7 +2,7 @@ use crate::{
     api::Api,
     auth::Session,
     error::{Error, Result},
-    models::{File, FilePage},
+    models::{File, FileDetails, FilePage},
 };
 use reqwest::Method;
 use serde_json::json;
@@ -138,7 +138,7 @@ impl Api {
             .await?;
         Ok(())
     }
-    pub async fn file_details(&self, s: &Session, id: &str) -> Result<File> {
+    pub async fn file_details(&self, s: &Session, id: &str) -> Result<FileDetails> {
         validate_id(id)?;
         self.drive_request(
             s,

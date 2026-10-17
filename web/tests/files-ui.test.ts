@@ -25,6 +25,7 @@ beforeEach(() => {
         appearance: { settings: defaults(), avatar: null, background: null, warnings: [] },
         hasSession: true,
         canClearSession: true,
+        authMethod: 'personal_access_token',
         warning: null,
       }
     if (command === 'transfer_snapshot')
@@ -63,7 +64,7 @@ it('无效保存会话不展示文件主页，也不展示退出登录', async (
   const original = transport.call.getMockImplementation()!
   transport.call.mockImplementation(async (command: string, ...args: unknown[]) => {
     if (command === 'list_files')
-      throw { code: 'authentication', message: '会话已过期，请重新登录。' }
+      throw { code: 'unauthorized', message: '会话已过期，请重新登录。' }
     return original(command, ...args)
   })
   const wrapper = mount(App)
@@ -77,7 +78,7 @@ it('无效保存会话不展示文件主页，也不展示退出登录', async (
 it('写操作失去认证时关闭旧对话框并返回登录页', async () => {
   const original = transport.call.getMockImplementation()!
   transport.call.mockImplementation(async (command: string, ...args: unknown[]) => {
-    if (command === 'rename_file') throw { code: 'authentication', message: '会话已过期' }
+    if (command === 'rename_file') throw { code: 'unauthorized', message: '会话已过期' }
     return original(command, ...args)
   })
   const wrapper = mount(App, { attachTo: document.body })
@@ -127,5 +128,45 @@ it('切换目录期间不显示或操作上个目录的文件', async () => {
   complete([])
   await flushPromises()
   expect(wrapper.text()).toContain('这里还没有文件')
+  wrapper.unmount()
+})
+it('未连接时仍可进入本机最近记录和下载记录，任务筛选维度互相独立', async () => {
+  transport.call.mockImplementation(async (command: string) => {
+    if (command === 'bootstrap')
+      return {
+        appearance: { settings: defaults(), avatar: null, background: null, warnings: [] },
+        hasSession: false,
+        canClearSession: false,
+        authMethod: null,
+        warning: null,
+      }
+    if (command === 'transfer_snapshot')
+      return { records: [], errors: {}, speeds: {}, persistence_error: null }
+    if (command === 'cancel_page' || command === 'cancel_preview') return undefined
+    throw { code: 'no_session', message: '没有保存的账号' }
+  })
+  const wrapper = mount(App, { attachTo: document.body })
+  await flushPromises()
+  await wrapper.find('.local-history-links button').trigger('click')
+  expect(wrapper.find('.content-panel h1').text()).toBe('最近访问')
+  await wrapper
+    .findAll('.sidebar nav button')
+    .find((button) => button.text().includes('任务中心'))!
+    .trigger('click')
+  const groups = wrapper.findAll('.task-filter-group')
+  expect(groups).toHaveLength(2)
+  expect(groups[0].findAll('button.active')).toHaveLength(1)
+  expect(groups[1].findAll('button.active')).toHaveLength(1)
+  await groups[0]
+    .findAll('button')
+    .find((button) => button.text().includes('失败'))!
+    .trigger('click')
+  await groups[1]
+    .findAll('button')
+    .find((button) => button.text().includes('云端离线'))!
+    .trigger('click')
+  expect(wrapper.findAll('.task-filter-group')[0].findAll('button.active')).toHaveLength(1)
+  expect(wrapper.findAll('.task-filter-group')[1].findAll('button.active')).toHaveLength(1)
+  expect(wrapper.text()).toContain('连接 PikPak 后查看云端任务')
   wrapper.unmount()
 })

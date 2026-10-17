@@ -267,8 +267,8 @@ async fn personal_access_token_permission_failure_is_actionable() {
         .verify_personal_access_token(&session)
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::AccessDenied));
-    assert!(err.to_string().contains("检查令牌权限"));
+    assert!(matches!(err, Error::UnsupportedPermission));
+    assert!(err.to_string().contains("令牌不具备"));
 }
 
 #[test]

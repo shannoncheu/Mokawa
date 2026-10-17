@@ -1,7 +1,7 @@
 use crate::{
     auth::{AuthMethod, Session},
     error::{Error, Result},
-    models::{DriveAbout, OfflineTask, OfflineTaskPage, OfflineTaskResponse},
+    models::{DriveAbout, OfflineTask, OfflineTaskPage, OfflineTaskResponse, Share, SharePage},
 };
 use reqwest::{Client, Method};
 use secrecy::ExposeSecret;
@@ -51,6 +51,7 @@ impl Api {
                 .json(body)
                 .send()
                 .await?,
+            false,
         )
         .await
     }
@@ -78,7 +79,11 @@ impl Api {
         if let Some(body) = body {
             request = request.json(&body);
         }
-        Self::decode(request.send().await?).await
+        Self::decode(
+            request.send().await?,
+            session.auth_method == AuthMethod::PersonalAccessToken,
+        )
+        .await
     }
 
     /// Verify a user-supplied PAT against the real PikPak Drive API with the
@@ -177,6 +182,170 @@ impl Api {
         Err(Error::Protocol)
     }
 
+    /// Return the current account's starred files. PikPak exposes favorites through
+    /// the `system_tag=STAR` file filter, not a local-only Mokawa collection.
+    pub async fn list_favorites(&self, session: &Session) -> Result<Vec<crate::models::File>> {
+        let mut query = vec![
+            ("parent_id", "*".into()),
+            ("limit", "100".into()),
+            (
+                "filters",
+                serde_json::json!({
+                    "trashed":{"eq":false},
+                    "phase":{"eq":"PHASE_TYPE_COMPLETE"},
+                    "system_tag":{"in":"STAR"}
+                })
+                .to_string(),
+            ),
+            ("thumbnail_size", "SIZE_SMALL".into()),
+            ("with_audit", "true".into()),
+        ];
+        let mut files = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            let page: crate::models::FilePage = self
+                .drive_request(session, Method::GET, "/drive/v1/files", &query, None)
+                .await?;
+            if files.len().saturating_add(page.files.len()) > 100_000 {
+                return Err(Error::Invalid("收藏条目过多，请稍后重试"));
+            }
+            files.extend(page.files);
+            if page.next_page_token.is_empty() {
+                for file in &mut files {
+                    file.starred = true;
+                }
+                return Ok(files);
+            }
+            if page.next_page_token.len() > 4096 || !seen.insert(page.next_page_token.clone()) {
+                return Err(Error::Protocol);
+            }
+            query.retain(|(key, _)| *key != "page_token");
+            query.push(("page_token", page.next_page_token));
+        }
+        Err(Error::Protocol)
+    }
+
+    pub async fn set_favorite(&self, session: &Session, id: &str, starred: bool) -> Result<()> {
+        crate::files::validate_id(id)?;
+        let action = if starred { "star" } else { "unstar" };
+        let _: serde_json::Value = self
+            .drive_request(
+                session,
+                Method::POST,
+                &format!("/drive/v1/files:{action}"),
+                &[],
+                Some(serde_json::json!({"ids":[id]})),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn restore_files(&self, session: &Session, ids: &[String]) -> Result<()> {
+        validate_ids(ids, 100, "请选择 1–100 个文件")?;
+        let _: serde_json::Value = self
+            .drive_request(
+                session,
+                Method::POST,
+                "/drive/v1/files:batchUntrash",
+                &[],
+                Some(serde_json::json!({"ids":ids})),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn permanently_delete(&self, session: &Session, ids: &[String]) -> Result<()> {
+        validate_ids(ids, 100, "请选择 1–100 个文件")?;
+        let _: serde_json::Value = self
+            .drive_request(
+                session,
+                Method::POST,
+                "/drive/v1/files:batchDelete",
+                &[],
+                Some(serde_json::json!({"ids":ids})),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_shares(&self, session: &Session) -> Result<Vec<Share>> {
+        let mut query = vec![
+            ("limit", "100".into()),
+            ("thumbnail_size", "SIZE_SMALL".into()),
+        ];
+        let mut shares = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..100 {
+            let page: SharePage = self
+                .drive_request(session, Method::GET, "/drive/v1/share/list", &query, None)
+                .await?;
+            if shares.len().saturating_add(page.data.len()) > 10_000 {
+                return Err(Error::Invalid("分享条目过多，请稍后重试"));
+            }
+            shares.extend(page.data);
+            if page
+                .next_page_token
+                .as_deref()
+                .unwrap_or_default()
+                .is_empty()
+            {
+                return Ok(shares);
+            }
+            let Some(next_page_token) = page.next_page_token else {
+                return Ok(shares);
+            };
+            if next_page_token.len() > 4096 || !seen.insert(next_page_token.clone()) {
+                return Err(Error::Protocol);
+            }
+            query.retain(|(key, _)| *key != "page_token");
+            query.push(("page_token", next_page_token));
+        }
+        Err(Error::Protocol)
+    }
+
+    pub async fn create_share(
+        &self,
+        session: &Session,
+        ids: &[String],
+        expiration_days: u32,
+        require_pass_code: bool,
+    ) -> Result<Share> {
+        validate_ids(ids, 100, "请选择 1–100 个文件")?;
+        if !matches!(expiration_days, 1 | 7 | 30) {
+            return Err(Error::Invalid("分享有效期"));
+        }
+        let value: serde_json::Value = self
+            .drive_request(
+                session,
+                Method::POST,
+                "/drive/v1/share",
+                &[],
+                Some(serde_json::json!({
+                    "file_ids":ids,
+                    "share_to": if require_pass_code { "encryptedlink" } else { "publiclink" },
+                    "expiration_days": expiration_days,
+                    "pass_code_option": if require_pass_code { "REQUIRED" } else { "NOT_REQUIRED" }
+                })),
+            )
+            .await?;
+        let share = value.get("share").cloned().unwrap_or(value);
+        serde_json::from_value(share).map_err(|_| Error::Protocol)
+    }
+
+    pub async fn delete_shares(&self, session: &Session, ids: &[String]) -> Result<()> {
+        validate_ids(ids, 100, "请选择 1–100 个分享")?;
+        let _: serde_json::Value = self
+            .drive_request(
+                session,
+                Method::POST,
+                "/drive/v1/share:batchDelete",
+                &[],
+                Some(serde_json::json!({"ids":ids})),
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn retry_offline_task(&self, session: &Session, id: &str) -> Result<()> {
         crate::files::validate_id(id)?;
         let task = self.offline_task(session, id).await?;
@@ -255,6 +424,9 @@ impl Api {
         match response.status().as_u16() {
             401 => return Err(Error::Unauthorized),
             429 => return Err(Error::RateLimited),
+            403 if session.auth_method == AuthMethod::PersonalAccessToken => {
+                return Err(Error::UnsupportedPermission);
+            }
             403 => return Err(Error::AccessDenied),
             200..=299 => {}
             status => return Err(Error::Http(status)),
@@ -262,19 +434,19 @@ impl Api {
         if response.content_length() == Some(0) {
             return Ok(());
         }
-        let _: serde_json::Value = Self::decode(response).await?;
+        let _: serde_json::Value = Self::decode(
+            response,
+            session.auth_method == AuthMethod::PersonalAccessToken,
+        )
+        .await?;
         Ok(())
     }
 
     /// Resolve the current signed media/download URL from PikPak metadata.
     pub async fn file_content_link(&self, session: &Session, id: &str) -> Result<String> {
         let file = self.file_details(session, id).await?;
-        if file.web_content_link.is_empty() {
-            return Err(Error::Invalid(
-                "PikPak 未提供此文件的访问链接，请刷新后重试或下载文件",
-            ));
-        }
-        let url = reqwest::Url::parse(&file.web_content_link).map_err(|_| Error::Protocol)?;
+        let raw_url = file.preferred_content_link()?;
+        let url = reqwest::Url::parse(raw_url).map_err(|_| Error::Protocol)?;
         if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
             return Err(Error::Protocol);
         }
@@ -305,14 +477,24 @@ impl Api {
         }
         decode_text_preview(bytes)
     }
-    async fn decode<T: DeserializeOwned>(mut response: reqwest::Response) -> Result<T> {
+    async fn decode<T: DeserializeOwned>(mut response: reqwest::Response, pat: bool) -> Result<T> {
         match response.status().as_u16() {
             401 => return Err(Error::Unauthorized),
             429 => return Err(Error::RateLimited),
+            403 if pat => return Err(Error::UnsupportedPermission),
             403 => return Err(Error::AccessDenied),
             200..=299 => {}
             s => return Err(Error::Http(s)),
         }
+        let response_status = response.status().as_u16();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("未提供")
+            .chars()
+            .take(80)
+            .collect::<String>();
         // Metadata is bounded independently of streaming file downloads. Do not trust Content-Length.
         const MAX_RESPONSE: usize = 4 * 1024 * 1024;
         if response
@@ -329,7 +511,10 @@ impl Api {
             bytes.extend_from_slice(&chunk);
         }
         let value: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
+            serde_json::from_slice(&bytes).map_err(|_| Error::ProtocolResponse {
+                status: response_status,
+                content_type: content_type.clone(),
+            })?;
         if value
             .get("error_code")
             .is_some_and(|c| c.as_i64() != Some(0))
@@ -339,8 +524,21 @@ impl Api {
         {
             return Err(Error::Api);
         }
-        serde_json::from_value(value).map_err(|_| Error::Protocol)
+        serde_json::from_value(value).map_err(|_| Error::ProtocolResponse {
+            status: response_status,
+            content_type,
+        })
     }
+}
+
+fn validate_ids(ids: &[String], max: usize, message: &'static str) -> Result<()> {
+    if ids.is_empty() || ids.len() > max {
+        return Err(Error::Invalid(message));
+    }
+    for id in ids {
+        crate::files::validate_id(id)?;
+    }
+    Ok(())
 }
 
 pub fn validate_offline_source(source: &str) -> Result<String> {
@@ -455,5 +653,230 @@ mod preview_tests {
             "只读文本"
         );
         assert!(decode_text_preview(vec![b'a'; 512 * 1024 + 1]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod pikpak_collection_api_tests {
+    use super::*;
+    use crate::auth::Session;
+    use serde_json::json;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{body_json, method, path, query_param},
+    };
+
+    fn pat() -> Session {
+        Session::from_personal_access_token("test-only-token".into()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn favorites_use_pikpak_star_filter_and_mutation_endpoint() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/drive/v1/files"))
+            .and(query_param("parent_id", "*"))
+            .and(query_param("with_audit", "true"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "files":[{"id":"f1","name":"收藏文件.txt","kind":"drive#file","size":"12","system_tag":"STAR"}],
+                "next_page_token":""
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/drive/v1/files:unstar"))
+            .and(body_json(json!({"ids":["f1"]})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = Api::for_mock(&server.uri()).unwrap();
+        let files = api.list_favorites(&pat()).await.unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].starred);
+        assert_eq!(files[0].size, 12);
+        api.set_favorite(&pat(), "f1", false).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn share_list_decodes_pikpaktui_string_metadata_and_create_request() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/drive/v1/share/list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data":[{"share_id":"s1","share_url":"https://mypikpak.com/s/s1","title":"分享","expiration_days":"7","view_count":"3","restore_count":"0","file_num":"2","share_status":"OK"},{"share_id":"s0","share_url":"https://mypikpak.com/s/s0","expiration_days":"-1"}],
+                "next_page_token":null
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/drive/v1/share"))
+            .and(body_json(json!({"file_ids":["f1"],"share_to":"encryptedlink","expiration_days":7,"pass_code_option":"REQUIRED"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"share_id":"s2","share_url":"https://mypikpak.com/s/s2","pass_code":"1234"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = Api::for_mock(&server.uri()).unwrap();
+        let shares = api.list_shares(&pat()).await.unwrap();
+        assert_eq!(shares[0].expiration_days, 7);
+        assert_eq!(shares[0].view_count, 3);
+        assert_eq!(shares[1].expiration_days, -1);
+        let created = api
+            .create_share(&pat(), &["f1".to_string()], 7, true)
+            .await
+            .unwrap();
+        assert_eq!(created.pass_code, "1234");
+    }
+
+    #[tokio::test]
+    async fn trash_restore_and_permanent_delete_use_distinct_confirmed_endpoints() {
+        let server = MockServer::start().await;
+        for (endpoint, id) in [
+            ("/drive/v1/files:batchUntrash", "f1"),
+            ("/drive/v1/files:batchDelete", "f2"),
+        ] {
+            Mock::given(method("POST"))
+                .and(path(endpoint))
+                .and(body_json(json!({"ids":[id]})))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        let api = Api::for_mock(&server.uri()).unwrap();
+        api.restore_files(&pat(), &["f1".into()]).await.unwrap();
+        api.permanently_delete(&pat(), &["f2".into()])
+            .await
+            .unwrap();
+        assert!(
+            api.permanently_delete(&pat(), &["../unsafe".into()])
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn pat_permission_denial_does_not_become_a_login_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/denied"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("permission denied"))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let api = Api::for_mock(&server.uri()).unwrap();
+        let pat_error = api
+            .drive_request::<serde_json::Value>(&pat(), Method::GET, "/denied", &[], None)
+            .await
+            .unwrap_err();
+        assert!(matches!(pat_error, Error::UnsupportedPermission));
+
+        let oauth: Session = serde_json::from_value(json!({
+            "access_token":"test-oauth-token","refresh_token":"test-refresh",
+            "captcha_token":"test-captcha","device_id":"test-device",
+            "expires_at":u64::MAX,"auth_method":"oauth"
+        }))
+        .unwrap();
+        let oauth_error = api
+            .drive_request::<serde_json::Value>(&oauth, Method::GET, "/denied", &[], None)
+            .await
+            .unwrap_err();
+        assert!(matches!(oauth_error, Error::AccessDenied));
+    }
+
+    #[tokio::test]
+    async fn malformed_api_response_reports_safe_status_and_content_type_only() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/bad-response"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "private response body must not appear in errors",
+                "text/html",
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = Api::for_mock(&server.uri()).unwrap();
+        let error = api
+            .drive_request::<serde_json::Value>(&pat(), Method::GET, "/bad-response", &[], None)
+            .await
+            .unwrap_err();
+        match &error {
+            Error::ProtocolResponse {
+                status,
+                content_type,
+            } => {
+                assert_eq!(*status, 200);
+                assert_eq!(content_type, "text/html");
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+        assert!(!error.to_string().contains("private response body"));
+    }
+
+    #[tokio::test]
+    async fn video_fetch_response_accepts_nullable_legacy_link_and_uses_visible_original_media() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/drive/v1/files/video1"))
+            .and(query_param("usage", "FETCH"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name":"大视频.mp4","size":"6442450944","web_content_link":null,
+                "medias":[
+                    {"media_name":"720P","is_origin":false,"link":{"url":"https://cdn.invalid/transcoded"}},
+                    {"media_name":"Original","is_origin":true,"is_visible":true,"need_more_quota":false,"link":{"url":"https://cdn.invalid/original","expire":"later","fallbacks":[]}}
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = Api::for_mock(&server.uri()).unwrap();
+        assert_eq!(
+            api.file_content_link(&pat(), "video1").await.unwrap(),
+            "https://cdn.invalid/original"
+        );
+    }
+
+    #[tokio::test]
+    async fn hidden_or_quota_restricted_original_is_not_bypassed_by_download_link() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/drive/v1/files/video2"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name":"受限视频.mp4","size":"1000","web_content_link":"https://cdn.invalid/download",
+                "medias":[{"is_origin":true,"is_visible":false,"link":{"url":"https://cdn.invalid/original"}}]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = Api::for_mock(&server.uri()).unwrap();
+        let error = api.file_content_link(&pat(), "video2").await.unwrap_err();
+        assert!(error.to_string().contains("不可播放"));
+    }
+
+    #[tokio::test]
+    async fn visible_transcode_can_play_when_original_is_restricted() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/drive/v1/files/video3"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name":"转码视频.mp4","size":"1000","web_content_link":"https://cdn.invalid/download",
+                "medias":[
+                    {"is_origin":true,"is_visible":false,"link":{"url":"https://cdn.invalid/hidden-original"}},
+                    {"is_origin":false,"is_visible":true,"need_more_quota":false,"link":{"url":"https://cdn.invalid/visible-transcode"}}
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = Api::for_mock(&server.uri()).unwrap();
+        assert_eq!(
+            api.file_content_link(&pat(), "video3").await.unwrap(),
+            "https://cdn.invalid/visible-transcode"
+        );
     }
 }

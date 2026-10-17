@@ -35,6 +35,7 @@ export interface Bootstrap {
   appearance: Appearance
   hasSession: boolean
   canClearSession: boolean
+  authMethod: 'oauth' | 'personal_access_token' | null
   authorizationReady: boolean
   warning: string | null
 }
@@ -45,6 +46,7 @@ export interface CloudFile {
   size: number
   modified_time: string
   mime_type: string
+  starred: boolean
 }
 export interface DriveQuota {
   limit: number | null
@@ -75,6 +77,19 @@ export interface OfflineTask {
   message: string
   created_time: string
   updated_time: string
+}
+export interface Share {
+  share_id: string
+  share_url: string
+  title: string
+  pass_code: string
+  share_to: string
+  create_time: string
+  expiration_days: number
+  view_count: number
+  restore_count: number
+  file_num: number
+  share_status: string
 }
 export interface AppError {
   code: string

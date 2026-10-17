@@ -146,13 +146,13 @@ button svg {
   color-scheme: light;
 }
 .app[data-theme='dark'] {
-  --canvas: #18191d;
-  --surface-rgb: 34, 35, 41;
-  --solid: #222329;
-  --sidebar-surface: #1d1e23;
+  --canvas: #202126;
+  --surface-rgb: 38, 39, 45;
+  --solid: #202126;
+  --sidebar-surface: #202126;
   --text: #f2f3f6;
   --muted: #a0a4af;
-  --muted-text: #c0c3cc;
+  --muted-text: #c4c7d0;
   --accent-text: #c2cbff;
   --line: #34363e;
   --button: #292a31;
@@ -202,15 +202,15 @@ button svg {
   align-items: center;
   position: relative;
   z-index: 5;
-  background: var(--solid);
+  background: var(--canvas);
   border-bottom: 0;
   user-select: none;
 }
 .titlebar-drag {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding-left: 20px;
+  gap: 0;
+  padding-left: 0;
   flex: 1;
   height: 100%;
   font-size: 13px;
@@ -269,18 +269,29 @@ button svg {
 }
 .workspace {
   display: flex;
-  gap: 12px;
+  gap: 0;
   height: calc(100% - 48px);
   min-height: 0;
-  /* Join the workspace to the custom titlebar; the old 12px top gutter
-     exposed the blurred personalization layer as an unintended strip. */
-  padding: 0 12px 12px;
+  padding: 0;
 }
-.workspace > .content-panel,
-.workspace > .detail-panel {
-  border-top: 0;
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
+.workspace > .sidebar.panel,
+.workspace > .content-panel.panel,
+.workspace > .detail-panel.panel {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--canvas);
+}
+.workspace > .sidebar.panel {
+  border-right: 1px solid var(--line);
+}
+.workspace > .detail-panel.panel {
+  border-left: 1px solid var(--line);
+}
+.app.has-background .workspace > .sidebar.panel,
+.app.has-background .workspace > .content-panel.panel,
+.app.has-background .workspace > .detail-panel.panel {
+  background: rgba(var(--surface-rgb), var(--panel-alpha));
 }
 .sidebar {
   overflow: auto;
@@ -290,7 +301,7 @@ button svg {
   flex-direction: column;
   padding: 14px 10px 10px;
   border-top: 0;
-  border-radius: 0 14px 14px 14px;
+  border-radius: 0;
   background: var(--sidebar-surface);
   box-shadow: none;
 }
@@ -425,7 +436,7 @@ button svg {
   flex-direction: column;
   padding: 0 28px;
   border-top: 0;
-  border-radius: 0 14px 14px 14px;
+  border-radius: 0;
 }
 .files-topbar {
   display: flex;
@@ -501,9 +512,20 @@ button svg {
 }
 .file-toolbar {
   display: flex;
+  flex-wrap: nowrap;
   gap: 8px;
   align-items: center;
   padding: 0 0 16px;
+  min-width: 0;
+}
+.file-toolbar > button,
+.file-toolbar .segmented {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.file-toolbar .toolbar-spacer {
+  flex: 1 1 12px;
+  min-width: 8px;
 }
 .primary {
   background: var(--accent);
@@ -1000,6 +1022,82 @@ button svg {
 .tasks-kind.active {
   background: var(--accent-soft);
   color: var(--accent-text);
+}
+.task-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 28px;
+  border-bottom: 1px solid var(--line);
+  margin: 10px 0 24px;
+}
+.task-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.task-filter-group > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.task-filter-group > button {
+  padding: 10px 0 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted-text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.task-filter-group > button.active {
+  color: var(--accent-text);
+  box-shadow: 0 2px var(--accent);
+}
+.task-filter-group > button.tasks-kind {
+  margin-left: 0;
+  padding: 7px 10px;
+  border-radius: 7px;
+  box-shadow: none;
+}
+.task-filter-group > button.tasks-kind.active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.remote-file-row {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+  color: var(--muted-text);
+}
+.remote-file-row:hover {
+  background: var(--hover);
+}
+.remote-file-name {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+.remote-file-name b,
+.remote-file-name small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remote-file-name b {
+  color: var(--text);
+  font-size: 13px;
+}
+.remote-file-name small {
+  color: var(--muted-text);
+  font-size: 11px;
+}
+.share-row .remote-file-name small {
+  user-select: text;
 }
 .toolbar-actions {
   display: flex;
@@ -1548,6 +1646,12 @@ progress::-webkit-progress-value {
   flex-direction: column;
   gap: 15px;
 }
+.local-history-links {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
 .login-card > .hero {
   align-self: center;
 }
@@ -1754,8 +1858,8 @@ progress::-webkit-progress-value {
     width: 190px;
   }
   .workspace {
-    gap: 9px;
-    padding: 0 9px 9px;
+    gap: 0;
+    padding: 0;
   }
   .files-page {
     padding-left: 20px;
@@ -1826,8 +1930,8 @@ progress::-webkit-progress-value {
     display: none;
   }
   .workspace {
-    gap: 10px;
-    padding: 0 10px 10px;
+    gap: 0;
+    padding: 0;
   }
   .sidebar {
     width: 154px;
@@ -1950,7 +2054,18 @@ progress::-webkit-progress-value {
     display: none;
   }
   .file-toolbar {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .file-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+  .file-toolbar > button {
+    padding-left: 7px;
+    padding-right: 7px;
+    font-size: 10px;
   }
 }
 

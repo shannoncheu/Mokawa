@@ -50,6 +50,7 @@ import {
   formatDate,
   type DriveQuota,
   type OfflineTask,
+  type Share,
 } from './types'
 import AppearancePanel from './components/AppearancePanel.vue'
 import VirtualFiles from './components/VirtualFiles.vue'
@@ -69,6 +70,7 @@ const modal = ref<HTMLFormElement>()
 let returnFocus: HTMLElement | null = null
 const page = ref('login')
 const authenticated = ref(false)
+const authMethod = ref<'oauth' | 'personal_access_token' | null>(null)
 const busy = ref(false)
 const personalAccessToken = ref('')
 const booting = ref(true)
@@ -95,14 +97,16 @@ const tasks = shallowRef<Transfers>({
 })
 const offlineTasks = shallowRef<OfflineTask[]>([])
 const offlineLoading = ref(false)
+const offlineError = ref('')
 const offlineSource = ref('')
 const offlineDestination = ref('')
-const taskKind = ref<'local' | 'cloud'>('local')
-const dialog = ref<'folder' | 'rename' | 'trash' | 'offline' | null>(null)
+const taskKind = ref<'all' | 'local' | 'cloud'>('all')
+const dialog = ref<'folder' | 'rename' | 'trash' | 'offline' | 'share' | null>(null)
 const newName = ref('')
 const writing = ref(false)
 const nameInput = ref<HTMLInputElement>()
 let requestGeneration = Date.now()
+let remotePageGeneration = 0
 let disposed = false
 let queryTimer: ReturnType<typeof setTimeout> | undefined
 let offlineTimer: ReturnType<typeof setInterval> | undefined
@@ -115,10 +119,17 @@ const maximized = ref(false)
 const sidebarCollapsed = ref(false)
 const settingsSection = ref('appearance')
 const taskFilter = ref<'all' | 'active' | 'completed' | 'failed'>('all')
+const recentVisits = ref<{ file: CloudFile; visitedAt: string }[]>([])
+const remoteFiles = shallowRef<CloudFile[]>([])
+const shares = shallowRef<Share[]>([])
+const pageLoading = ref(false)
+const remoteError = ref('')
+const shareExpiration = ref(7)
+const sharePassword = ref(true)
 watch([page, taskKind], ([currentPage, kind]) => {
   if (offlineTimer) clearInterval(offlineTimer)
   offlineTimer = undefined
-  if (currentPage === 'offline' || (currentPage === 'tasks' && kind === 'cloud')) {
+  if (currentPage === 'offline' || (currentPage === 'tasks' && kind !== 'local')) {
     offlineTimer = setInterval(() => {
       const active = offlineTasks.value.some((task) =>
         ['PHASE_TYPE_RUNNING', 'PHASE_TYPE_PENDING'].includes(task.phase.toUpperCase()),
@@ -149,6 +160,22 @@ const filteredTasks = computed(() => {
   if (taskFilter.value === 'completed') return rows.filter((task) => task.phase === 'Completed')
   if (taskFilter.value === 'failed')
     return rows.filter((task) => ['Failed', 'Interrupted'].includes(task.phase))
+  return rows
+})
+const filteredCloudTasks = computed(() => {
+  const rows = offlineTasks.value
+  if (taskFilter.value === 'active')
+    return rows.filter((task) =>
+      ['PHASE_TYPE_RUNNING', 'PHASE_TYPE_PENDING'].includes(task.phase.toUpperCase()),
+    )
+  if (taskFilter.value === 'completed')
+    return rows.filter((task) =>
+      ['PHASE_TYPE_COMPLETE', 'COMPLETE', 'COMPLETED'].includes(task.phase.toUpperCase()),
+    )
+  if (taskFilter.value === 'failed')
+    return rows.filter((task) =>
+      ['PHASE_TYPE_ERROR', 'ERROR', 'FAILED'].includes(task.phase.toUpperCase()),
+    )
   return rows
 })
 const recentTasks = computed(() => [...tasks.value.records].reverse().slice(0, 3))
@@ -207,7 +234,8 @@ watch(
       else previewUrl.value = await call<string>('preview_content_link', { id, generation })
     } catch (error) {
       if (generation === previewGeneration) {
-        if ((error as AppError)?.code === 'authentication') report(error)
+        if (['unauthorized', 'no_session', 'invalid_session'].includes((error as AppError)?.code))
+          report(error)
         else previewError.value = errorMessage(error)
       }
     } finally {
@@ -240,7 +268,7 @@ watch(page, (_value, old) => {
   accountMenu.value = false
 })
 function route(id: string) {
-  if (['settings', 'tasks', 'login'].includes(id)) {
+  if (['settings', 'tasks', 'login', 'recent'].includes(id)) {
     page.value = id
     return
   }
@@ -252,6 +280,143 @@ function route(id: string) {
   page.value = id
   if (id === 'files' && !files.value.length) void load()
   if (id === 'offline') void refreshOffline()
+  if (id === 'favorites') void loadFavorites()
+  if (id === 'shares') void loadShares()
+  if (id === 'trash') void loadTrash()
+}
+function recordVisit(file: CloudFile) {
+  try {
+    const next = [
+      { file, visitedAt: new Date().toISOString() },
+      ...recentVisits.value.filter((row) => row.file.id !== file.id),
+    ].slice(0, 100)
+    recentVisits.value = next
+    localStorage.setItem('mokawa-recent-visits', JSON.stringify(next))
+  } catch {
+    notify('无法保存本机最近访问记录。')
+  }
+}
+function clearRecent() {
+  recentVisits.value = []
+  try {
+    localStorage.removeItem('mokawa-recent-visits')
+  } catch {
+    notify('无法清理本机访问记录。')
+  }
+}
+function openRecent(row: { file: CloudFile; visitedAt: string }) {
+  if (isFolder(row.file)) {
+    notify('本机记录未保存云端路径，请从“我的文件”重新定位此文件夹。')
+    return
+  }
+  files.value = [row.file]
+  selected.value = new Set([row.file.id])
+  page.value = 'files'
+  detail.value = true
+}
+async function copyShare(share: Share) {
+  try {
+    await navigator.clipboard.writeText(share.share_url)
+    notify('分享链接已复制。')
+  } catch {
+    notify(`无法访问剪贴板。分享链接：${share.share_url}`)
+  }
+}
+async function loadFavorites() {
+  const generation = ++remotePageGeneration
+  pageLoading.value = true
+  remoteFiles.value = []
+  remoteError.value = ''
+  try {
+    const result = await call<CloudFile[]>('list_favorites')
+    if (generation === remotePageGeneration && page.value === 'favorites')
+      remoteFiles.value = result
+  } catch (error) {
+    if (generation === remotePageGeneration && page.value === 'favorites') {
+      remoteError.value = errorMessage(error)
+      report(error)
+    }
+  } finally {
+    if (generation === remotePageGeneration) pageLoading.value = false
+  }
+}
+async function loadTrash() {
+  const generation = ++remotePageGeneration
+  pageLoading.value = true
+  remoteFiles.value = []
+  remoteError.value = ''
+  try {
+    const result = await call<CloudFile[]>('list_trash')
+    if (generation === remotePageGeneration && page.value === 'trash') remoteFiles.value = result
+  } catch (error) {
+    if (generation === remotePageGeneration && page.value === 'trash') {
+      remoteError.value = errorMessage(error)
+      report(error)
+    }
+  } finally {
+    if (generation === remotePageGeneration) pageLoading.value = false
+  }
+}
+async function loadShares() {
+  const generation = ++remotePageGeneration
+  pageLoading.value = true
+  shares.value = []
+  remoteError.value = ''
+  try {
+    const result = await call<Share[]>('list_shares')
+    if (generation === remotePageGeneration && page.value === 'shares') shares.value = result
+  } catch (error) {
+    if (generation === remotePageGeneration && page.value === 'shares') {
+      remoteError.value = errorMessage(error)
+      report(error)
+    }
+  } finally {
+    if (generation === remotePageGeneration) pageLoading.value = false
+  }
+}
+async function toggleFavorite(file: CloudFile) {
+  try {
+    const starred = !file.starred
+    await call('set_favorite', { id: file.id, starred })
+    files.value = files.value.map((row) => (row.id === file.id ? { ...row, starred } : row))
+    remoteFiles.value = remoteFiles.value.map((row) =>
+      row.id === file.id ? { ...row, starred } : row,
+    )
+    if (page.value === 'favorites') await loadFavorites()
+    notify(starred ? '已加入 PikPak 收藏。' : '已从 PikPak 收藏移除。')
+  } catch (error) {
+    report(error)
+  }
+}
+async function restore(file: CloudFile) {
+  try {
+    await call('restore_files', { ids: [file.id] })
+    await loadTrash()
+    notify('已从 PikPak 回收站恢复。')
+  } catch (error) {
+    report(error)
+  }
+}
+async function permanentlyDelete(file: CloudFile) {
+  if (!window.confirm(`永久删除“${file.name}”？此操作无法撤销。`)) return
+  if (!window.confirm('再次确认：此文件将从 PikPak 永久删除。')) return
+  try {
+    await call('permanently_delete_files', { ids: [file.id], confirmed: true })
+    await loadTrash()
+    notify('文件已永久删除。')
+  } catch (error) {
+    report(error)
+  }
+}
+async function deleteShare(share: Share) {
+  if (!window.confirm(`取消分享“${share.title || '未命名分享'}”？`)) return
+  try {
+    await call('delete_shares', { ids: [share.share_id], confirmed: true })
+    await loadShares()
+    notify('分享已取消。')
+  } catch (error) {
+    report(error)
+  }
 }
 function select(file: CloudFile, multi: boolean) {
   const next = multi ? new Set(selected.value) : new Set<string>()
@@ -268,13 +433,19 @@ function context(file: CloudFile, event: MouseEvent) {
 }
 function report(error: unknown) {
   const message = errorMessage(error)
-  if ((error as AppError)?.code === 'authentication') {
+  const code = (error as AppError)?.code
+  if (['unauthorized', 'no_session', 'invalid_session'].includes(code)) {
     authenticated.value = false
+    if (code !== 'unauthorized') hasSavedSession.value = false
     quota.value = null
     quotaUpdatedAt.value = 0
     files.value = []
-    selected.value = new Set()
+    remoteFiles.value = []
+    shares.value = []
+    offlineTasks.value = []
     path.value = []
+    selected.value = new Set()
+    detail.value = false
     dialog.value = null
     menu.value = null
     accountMenu.value = false
@@ -300,6 +471,7 @@ async function load() {
     files.value = result
     selected.value = new Set()
     authenticated.value = true
+    hasSavedSession.value = true
     page.value = 'files'
     status.value = `共 ${result.length.toLocaleString('zh-CN')} 项`
     void loadQuota()
@@ -319,7 +491,8 @@ async function loadQuota(force = false) {
     quotaUpdatedAt.value = Date.now()
   } catch (error) {
     quotaError.value = true
-    if ((error as AppError)?.code === 'authentication') report(error)
+    if (['unauthorized', 'no_session', 'invalid_session'].includes((error as AppError)?.code))
+      report(error)
   } finally {
     quotaLoading.value = false
   }
@@ -339,6 +512,7 @@ function quotaLabel() {
   return `${formatBytes(quota.value.usage)} / ${formatBytes(quota.value.limit)}`
 }
 function openFile(file: CloudFile) {
+  recordVisit(file)
   if (isFolder(file)) {
     path.value.push({ id: file.id, name: file.name })
     query.value = ''
@@ -350,6 +524,18 @@ function openFile(file: CloudFile) {
 }
 function setMediaElement(element: unknown) {
   if (element instanceof HTMLMediaElement) mediaElement = element
+}
+function mediaFailure(kind: '视频' | '音频') {
+  const code = mediaElement?.error?.code
+  const reason =
+    code === 2
+      ? '读取网络失败，访问地址可能已过期或网络已中断。'
+      : code === 3
+        ? 'WebView2 无法解码此媒体编码。'
+        : code === 4
+          ? '访问地址无效或媒体格式不受支持。'
+          : '媒体读取已中止。'
+  previewError.value = `${kind}${reason}可重试或下载文件。`
 }
 function retryPreview() {
   detail.value = false
@@ -374,6 +560,7 @@ async function connectPersonalAccessToken() {
   status.value = '正在向 PikPak 验证令牌并读取根目录…'
   try {
     await call('connect_personal_access_token', { token })
+    authMethod.value = 'personal_access_token'
     hasSavedSession.value = true
     path.value = []
     page.value = 'files'
@@ -397,6 +584,7 @@ async function signOut() {
   try {
     await call('sign_out')
     authenticated.value = false
+    authMethod.value = null
     hasSavedSession.value = false
     quota.value = null
     quotaUpdatedAt.value = 0
@@ -427,6 +615,15 @@ async function edit(kind: 'folder' | 'rename' | 'trash') {
   await nextTick()
   ;(nameInput.value || modal.value?.querySelector<HTMLButtonElement>('.cancel-action'))?.focus()
   nameInput.value?.select()
+}
+function createShare() {
+  if (!selected.value.size) {
+    notify('请先选择要分享的文件。')
+    return
+  }
+  shareExpiration.value = 7
+  sharePassword.value = true
+  dialog.value = 'share'
 }
 watch(
   dialog,
@@ -469,7 +666,25 @@ async function confirm() {
       await call('create_folder', { parent: path.value.at(-1)?.id || '', name: newName.value })
     else if (dialog.value === 'rename')
       await call('rename_file', { id: currentFile.value?.id, name: newName.value })
-    else await call('trash_files', { ids: [...selected.value], confirmed: true })
+    else if (dialog.value === 'share') {
+      const share = await call<Share>('create_share', {
+        ids: [...selected.value],
+        expirationDays: shareExpiration.value,
+        requirePassCode: sharePassword.value,
+      })
+      dialog.value = null
+      if (share.share_url) {
+        try {
+          await navigator.clipboard.writeText(share.share_url)
+        } catch {
+          /* UI still presents the returned link below. */
+        }
+        notify(
+          `分享已创建：${share.share_url}${share.pass_code ? ` 提取码：${share.pass_code}` : ''}`,
+        )
+      } else notify('PikPak 已处理分享请求，但未返回分享链接。')
+      return
+    } else await call('trash_files', { ids: [...selected.value], confirmed: true })
     dialog.value = null
     await load()
   } catch (error) {
@@ -501,23 +716,29 @@ async function download() {
 async function refreshOffline() {
   if (!authenticated.value || offlineLoading.value) return
   offlineLoading.value = true
+  offlineError.value = ''
   try {
     offlineTasks.value = await call<OfflineTask[]>('offline_tasks')
   } catch (error) {
+    offlineError.value = errorMessage(error)
     report(error)
   } finally {
     offlineLoading.value = false
   }
 }
 function newOfflineTask() {
+  if (!authenticated.value) {
+    notify('连接 PikPak 后才能创建云端离线任务。')
+    return
+  }
   offlineDestination.value = path.value.at(-1)?.id || ''
   offlineSource.value = ''
   dialog.value = 'offline'
   void nextTick(() => modal.value?.querySelector<HTMLInputElement>('input')?.focus())
 }
-function selectTaskKind(kind: 'local' | 'cloud') {
+function selectTaskKind(kind: 'all' | 'local' | 'cloud') {
   taskKind.value = kind
-  if (kind === 'cloud') void refreshOffline()
+  if (kind !== 'local') void refreshOffline()
 }
 async function importTorrent() {
   try {
@@ -639,6 +860,15 @@ onMounted(async () => {
     await appearance.initialize(result.appearance)
     if (disposed) return
     hasSavedSession.value = result.canClearSession
+    authMethod.value = result.authMethod
+    try {
+      const saved = JSON.parse(localStorage.getItem('mokawa-recent-visits') || '[]')
+      recentVisits.value = Array.isArray(saved)
+        ? saved.filter((row) => row?.file?.id && row?.visitedAt).slice(0, 100)
+        : []
+    } catch {
+      recentVisits.value = []
+    }
     if (result.warning) status.value = result.warning
     const revision = taskRevision
     const initial = await call<Transfers>('transfer_snapshot')
@@ -697,6 +927,7 @@ function closeMenus() {
   accountMenu.value = false
 }
 function showDetails() {
+  if (currentFile.value) recordVisit(currentFile.value)
   detail.value = true
   menu.value = null
 }
@@ -709,7 +940,7 @@ function showMoveUnavailable() {
   <div
     class="app"
     :data-theme="dark ? 'dark' : 'light'"
-    :class="{ 'reduce-motion': settings.reducedMotion }"
+    :class="{ 'reduce-motion': settings.reducedMotion, 'has-background': !!background }"
     :style="style"
     @click="closeMenus"
   >
@@ -728,9 +959,7 @@ function showMoveUnavailable() {
         @pointerup="titlebarPointerEnd"
         @pointercancel="titlebarPointerEnd"
         @dblclick="windowAction('toggleMaximize')"
-      >
-        <i class="brand-mark">M</i><b>Mokawa</b>
-      </div>
+      />
       <span v-if="!desktop" class="preview-badge">浏览器预览 · 不连接网盘</span>
       <div class="window-controls">
         <button aria-label="最小化" @click="windowAction('minimize')"><Minus :size="15" /></button
@@ -870,6 +1099,14 @@ function showMoveUnavailable() {
           <button class="text-button" disabled title="等待 PikPak 为 Mokawa 明确桌面客户端授权契约">
             使用 PikPak 浏览器授权（尚未开放）
           </button>
+          <div class="local-history-links">
+            <button class="text-button" @click="route('recent')">
+              <Clock3 :size="15" />查看本机最近访问
+            </button>
+            <button class="text-button" @click="route('tasks')">
+              <Download :size="15" />查看本地下载记录
+            </button>
+          </div>
           <button :disabled="busy" @click="load">重试已保存的会话</button
           ><button v-if="busy" class="text-button" @click="cancelLogin">取消会话验证</button
           ><button v-if="hasSavedSession" :disabled="busy" @click="signOut">清除本地会话</button
@@ -932,7 +1169,19 @@ function showMoveUnavailable() {
                 <span class="avatar"><UserRound :size="18" /></span>
                 <div>
                   <b>{{ authenticated ? '已连接 PikPak' : '未连接 PikPak' }}</b>
-                  <p>{{ authenticated ? '当前会话已验证' : '使用个人访问令牌连接' }}</p>
+                  <p>
+                    {{
+                      authenticated
+                        ? authMethod === 'personal_access_token'
+                          ? '个人访问令牌 · 已验证'
+                          : 'OAuth 会话 · 已验证'
+                        : authMethod
+                          ? authMethod === 'personal_access_token'
+                            ? 'PAT 已保存，等待重新验证'
+                            : 'OAuth 会话待验证'
+                          : '尚未连接 PikPak'
+                    }}
+                  </p>
                 </div>
                 <button v-if="authenticated" class="danger-text" @click="signOut">退出登录</button
                 ><button v-else class="primary" @click="route('login')">前往连接</button>
@@ -983,6 +1232,12 @@ function showMoveUnavailable() {
         </p>
         <div v-if="offlineLoading && !offlineTasks.length" class="empty-state">
           <LoaderCircle class="spin" :size="26" />正在读取 PikPak 离线任务…
+        </div>
+        <div v-else-if="offlineError" class="empty-state">
+          <CircleAlert :size="36" />
+          <h2>读取云端任务失败</h2>
+          <p>{{ offlineError }}</p>
+          <button :disabled="offlineLoading" @click="refreshOffline">重试</button>
         </div>
         <div v-else-if="!offlineTasks.length" class="empty-state">
           <Download :size="36" />
@@ -1051,40 +1306,87 @@ function showMoveUnavailable() {
             <h1>任务中心</h1>
           </div>
           <span class="muted">最多同时下载 2 个文件</span>
-        </div>
-        <div class="tabs">
-          <button :class="{ active: taskFilter === 'all' }" @click="taskFilter = 'all'">
-            全部 <span>{{ tasks.records.length }}</span></button
-          ><button :class="{ active: taskFilter === 'active' }" @click="taskFilter = 'active'">
-            进行中</button
-          ><button
-            :class="{ active: taskFilter === 'completed' }"
-            @click="taskFilter = 'completed'"
+          <button
+            v-if="taskKind !== 'local' && authenticated"
+            class="icon-button"
+            aria-label="刷新云端任务"
+            :disabled="offlineLoading"
+            @click="refreshOffline"
           >
-            已完成</button
-          ><button :class="{ active: taskFilter === 'failed' }" @click="taskFilter = 'failed'">
-            失败</button
-          ><button
-            class="tasks-kind"
-            :class="{ active: taskKind === 'local' }"
-            @click="selectTaskKind('local')"
-          >
-            本地下载</button
-          ><button
-            class="tasks-kind"
-            :class="{ active: taskKind === 'cloud' }"
-            @click="selectTaskKind('cloud')"
-          >
-            云端离线
+            <RefreshCw :size="16" :class="{ spin: offlineLoading }" />
           </button>
         </div>
-        <template v-if="taskKind === 'cloud'">
-          <div v-if="!offlineTasks.length" class="empty-state">
+        <div class="task-filters">
+          <div class="task-filter-group" aria-label="任务状态筛选">
+            <span>状态</span>
+            <button :class="{ active: taskFilter === 'all' }" @click="taskFilter = 'all'">
+              全部
+              <span>{{
+                taskKind === 'cloud'
+                  ? offlineTasks.length
+                  : taskKind === 'local'
+                    ? tasks.records.length
+                    : tasks.records.length + offlineTasks.length
+              }}</span></button
+            ><button :class="{ active: taskFilter === 'active' }" @click="taskFilter = 'active'">
+              进行中</button
+            ><button
+              :class="{ active: taskFilter === 'completed' }"
+              @click="taskFilter = 'completed'"
+            >
+              已完成</button
+            ><button :class="{ active: taskFilter === 'failed' }" @click="taskFilter = 'failed'">
+              失败
+            </button>
+          </div>
+          <div class="task-filter-group" aria-label="任务类型筛选">
+            <span>类型</span>
+            <button
+              class="tasks-kind"
+              :class="{ active: taskKind === 'all' }"
+              @click="selectTaskKind('all')"
+            >
+              全部任务
+            </button>
+            <button
+              class="tasks-kind"
+              :class="{ active: taskKind === 'local' }"
+              @click="selectTaskKind('local')"
+            >
+              本地下载
+            </button>
+            <button
+              class="tasks-kind"
+              :class="{ active: taskKind === 'cloud' }"
+              @click="selectTaskKind('cloud')"
+            >
+              云端离线
+            </button>
+          </div>
+        </div>
+        <template v-if="taskKind !== 'local'">
+          <h2 v-if="taskKind === 'all'" class="task-source-heading">云端离线</h2>
+          <div v-if="!authenticated" class="empty-state">
+            <CircleAlert :size="36" />
+            <h2>连接 PikPak 后查看云端任务</h2>
+            <button class="primary" @click="route('login')">连接账号</button>
+          </div>
+          <div v-else-if="offlineLoading && !offlineTasks.length" class="empty-state">
+            <LoaderCircle class="spin" :size="32" />
+            <h2>正在读取云端任务…</h2>
+          </div>
+          <div v-else-if="offlineError" class="empty-state">
+            <CircleAlert :size="36" />
+            <h2>读取云端任务失败</h2>
+            <p>{{ offlineError }}</p>
+            <button :disabled="offlineLoading" @click="refreshOffline">重试</button>
+          </div>
+          <div v-else-if="!filteredCloudTasks.length" class="empty-state">
             <Download :size="36" />
-            <h2>暂无云端离线任务</h2>
+            <h2>{{ offlineTasks.length ? '没有符合筛选条件的任务' : '暂无云端离线任务' }}</h2>
             <button class="primary" @click="newOfflineTask">新建离线任务</button>
           </div>
-          <article v-for="task in offlineTasks" :key="task.id" class="transfer-row">
+          <article v-for="task in filteredCloudTasks" :key="task.id" class="transfer-row">
             <div class="file-type-icon"><Download :size="20" /></div>
             <div class="transfer-content">
               <b>{{ task.file_name || task.name || 'PikPak 离线任务' }}</b>
@@ -1104,11 +1406,12 @@ function showMoveUnavailable() {
             </button>
           </article>
         </template>
-        <template v-else>
+        <template v-if="taskKind !== 'cloud'">
+          <h2 v-if="taskKind === 'all'" class="task-source-heading">本地下载</h2>
           <div v-if="!filteredTasks.length" class="empty-state">
             <Download :size="38" />
-            <h2>暂无下载任务</h2>
-            <p>登录后，选择文件并点击下载。</p>
+            <h2>{{ tasks.records.length ? '没有符合筛选条件的任务' : '暂无本地下载记录' }}</h2>
+            <p>本地任务记录可在未连接 PikPak 时查看；开始下载后会显示在这里。</p>
           </div>
           <div v-if="tasks.persistence_error" class="error-box">{{ tasks.persistence_error }}</div>
           <article v-for="task in filteredTasks" :key="task.id" class="transfer-row">
@@ -1146,6 +1449,202 @@ function showMoveUnavailable() {
           </article>
           <p class="footnote">取消与失败重试可用；暂停和断点续传尚未通过真实 PikPak 链接验证。</p>
         </template>
+      </section>
+      <section v-else-if="page === 'recent'" class="content-panel panel tasks-page">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">本机记录</p>
+            <h1>最近访问</h1>
+          </div>
+          <button class="text-button" :disabled="!recentVisits.length" @click="clearRecent">
+            清除记录
+          </button>
+        </div>
+        <p class="setting-note">
+          仅保存在此 Windows 用户的 Mokawa 本地设置中，不是 PikPak 云端访问历史。
+        </p>
+        <div v-if="!recentVisits.length" class="empty-state">
+          <Clock3 :size="36" />
+          <h2>暂无本机访问记录</h2>
+          <p>打开文件或文件夹后，会在这里保留最近 100 项。</p>
+        </div>
+        <article
+          v-for="row in recentVisits"
+          :key="row.file.id"
+          class="remote-file-row"
+          @dblclick="openRecent(row)"
+        >
+          <Folder v-if="isFolder(row.file)" :size="18" /><FileText v-else :size="18" /><span
+            class="remote-file-name"
+            ><b>{{ row.file.name }}</b
+            ><small>{{ formatDate(row.visitedAt) }} · 本机记录</small></span
+          >
+          <button
+            v-if="!isFolder(row.file)"
+            class="icon-button"
+            title="预览详情"
+            @click="openRecent(row)"
+          >
+            <FileText :size="16" />
+          </button>
+        </article>
+      </section>
+      <section v-else-if="page === 'favorites'" class="content-panel panel tasks-page">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">PikPak 云端</p>
+            <h1>收藏</h1>
+          </div>
+          <button
+            class="icon-button"
+            aria-label="刷新收藏"
+            :disabled="pageLoading"
+            @click="loadFavorites"
+          >
+            <RefreshCw :size="16" :class="{ spin: pageLoading }" />
+          </button>
+        </div>
+        <div v-if="pageLoading && !remoteFiles.length" class="empty-state">
+          <LoaderCircle class="spin" />
+          <h2>正在读取 PikPak 收藏…</h2>
+        </div>
+        <div v-else-if="remoteError" class="empty-state">
+          <CircleAlert :size="36" />
+          <h2>读取收藏失败</h2>
+          <p>{{ remoteError }}</p>
+          <button @click="loadFavorites">重试</button>
+        </div>
+        <div v-else-if="!remoteFiles.length" class="empty-state">
+          <Star :size="36" />
+          <h2>暂无收藏</h2>
+          <p>收藏来自 PikPak 云端，文件列表中可添加或取消收藏。</p>
+        </div>
+        <article v-for="file in remoteFiles" :key="file.id" class="remote-file-row">
+          <Folder v-if="isFolder(file)" :size="18" /><FileText v-else :size="18" /><span
+            class="remote-file-name"
+            ><b>{{ file.name }}</b
+            ><small
+              >{{ formatBytes(file.size) }} ·
+              {{ file.modified_time ? formatDate(file.modified_time) : '时间未提供' }}</small
+            ></span
+          ><button
+            class="icon-button"
+            aria-label="取消收藏"
+            title="从 PikPak 收藏移除"
+            @click="toggleFavorite(file)"
+          >
+            <Star :size="16" />
+          </button>
+        </article>
+      </section>
+      <section v-else-if="page === 'trash'" class="content-panel panel tasks-page">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">PikPak 云端</p>
+            <h1>回收站</h1>
+          </div>
+          <button
+            class="icon-button"
+            aria-label="刷新回收站"
+            :disabled="pageLoading"
+            @click="loadTrash"
+          >
+            <RefreshCw :size="16" :class="{ spin: pageLoading }" />
+          </button>
+        </div>
+        <p class="setting-note">永久删除无法撤销。恢复和删除会直接修改 PikPak 云端内容。</p>
+        <div v-if="pageLoading && !remoteFiles.length" class="empty-state">
+          <LoaderCircle class="spin" />
+          <h2>正在读取回收站…</h2>
+        </div>
+        <div v-else-if="remoteError" class="empty-state">
+          <CircleAlert :size="36" />
+          <h2>读取回收站失败</h2>
+          <p>{{ remoteError }}</p>
+          <button @click="loadTrash">重试</button>
+        </div>
+        <div v-else-if="!remoteFiles.length" class="empty-state">
+          <Trash2 :size="36" />
+          <h2>回收站为空</h2>
+          <p>这里仅显示 PikPak 实际返回的已删除文件。</p>
+        </div>
+        <article v-for="file in remoteFiles" :key="file.id" class="remote-file-row">
+          <Folder v-if="isFolder(file)" :size="18" /><FileText v-else :size="18" /><span
+            class="remote-file-name"
+            ><b>{{ file.name }}</b
+            ><small
+              >{{ formatBytes(file.size) }} ·
+              {{ file.modified_time ? formatDate(file.modified_time) : '时间未提供' }}</small
+            ></span
+          ><button class="text-button" @click="restore(file)">恢复</button
+          ><button
+            class="icon-button danger-text"
+            aria-label="永久删除"
+            title="永久删除"
+            @click="permanentlyDelete(file)"
+          >
+            <Trash2 :size="16" />
+          </button>
+        </article>
+      </section>
+      <section v-else-if="page === 'shares'" class="content-panel panel tasks-page">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">PikPak 云端</p>
+            <h1>分享管理</h1>
+          </div>
+          <button
+            class="icon-button"
+            aria-label="刷新分享"
+            :disabled="pageLoading"
+            @click="loadShares"
+          >
+            <RefreshCw :size="16" :class="{ spin: pageLoading }" />
+          </button>
+        </div>
+        <p class="setting-note">新建分享请先在“我的文件”选择文件，再使用工具栏中的分享操作。</p>
+        <div v-if="pageLoading && !shares.length" class="empty-state">
+          <LoaderCircle class="spin" />
+          <h2>正在读取 PikPak 分享…</h2>
+        </div>
+        <div v-else-if="remoteError" class="empty-state">
+          <CircleAlert :size="36" />
+          <h2>读取分享失败</h2>
+          <p>{{ remoteError }}</p>
+          <button @click="loadShares">重试</button>
+        </div>
+        <div v-else-if="!shares.length" class="empty-state">
+          <Share2 :size="36" />
+          <h2>暂无分享</h2>
+          <p>分享列表来自 PikPak 云端；可在文件列表中创建分享。</p>
+          <button @click="route('files')">前往我的文件</button>
+        </div>
+        <article v-for="share in shares" :key="share.share_id" class="remote-file-row share-row">
+          <Share2 :size="18" /><span class="remote-file-name"
+            ><b>{{ share.title || 'PikPak 分享' }}</b
+            ><small
+              >{{ share.share_url }} ·
+              {{ share.expiration_days < 0 ? '不限期' : `${share.expiration_days} 天` }} ·
+              {{ share.file_num }} 个文件{{
+                share.pass_code ? ` · 提取码 ${share.pass_code}` : ''
+              }}</small
+            ></span
+          ><button
+            class="icon-button"
+            title="复制分享链接"
+            aria-label="复制分享链接"
+            @click="copyShare(share)"
+          >
+            <Copy :size="16" /></button
+          ><button
+            class="icon-button danger-text"
+            title="取消分享"
+            aria-label="取消分享"
+            @click="deleteShare(share)"
+          >
+            <X :size="16" />
+          </button>
+        </article>
       </section>
       <section v-else-if="page === 'home'" class="content-panel panel home-page">
         <div class="home-topbar">
@@ -1326,6 +1825,7 @@ function showMoveUnavailable() {
           <b>已选择 {{ selected.size }} 项</b
           ><button @click="download"><Download :size="15" />下载</button
           ><button @click="edit('rename')">重命名</button
+          ><button @click="createShare"><Share2 :size="15" />分享</button
           ><button class="danger-text" @click="edit('trash')">移入回收站</button
           ><button class="text-button" @click="selected = new Set()">取消选择</button>
         </div>
@@ -1397,10 +1897,7 @@ function showMoveUnavailable() {
             playsinline
             preload="metadata"
             referrerpolicy="no-referrer"
-            @error="
-              previewError =
-                '视频无法播放，链接可能已过期或 WebView2 不支持该编码。可重试或下载文件。'
-            "
+            @error="mediaFailure('视频')"
           />
           <audio
             v-else-if="previewKind === 'audio' && previewUrl && !previewError"
@@ -1409,7 +1906,7 @@ function showMoveUnavailable() {
             controls
             preload="metadata"
             referrerpolicy="no-referrer"
-            @error="previewError = '音频无法播放，链接可能已过期或格式不受支持。可重试或下载文件。'"
+            @error="mediaFailure('音频')"
           />
           <pre v-else-if="previewKind === 'text' && !previewError" class="text-preview">{{
             textContent
@@ -1458,7 +1955,13 @@ function showMoveUnavailable() {
         <span class="avatar large"
           ><img v-if="avatar" :src="avatar" alt="本地头像" /><UserRound v-else :size="25" /></span
         ><b>{{ authenticated ? '已连接 PikPak' : '尚未登录' }}</b
-        ><small>头像仅用于 Mokawa 本地界面</small>
+        ><small>{{
+          authMethod === 'personal_access_token'
+            ? '认证方式：个人访问令牌'
+            : authMethod === 'oauth'
+              ? '认证方式：OAuth'
+              : '头像仅用于 Mokawa 本地界面'
+        }}</small>
       </div>
       <button @click="route('settings')"><Settings2 :size="16" />个性化设置</button
       ><button v-if="authenticated" @click="signOut"><LogOut :size="16" />退出登录</button
@@ -1472,6 +1975,8 @@ function showMoveUnavailable() {
     >
       <button @click="download"><Download :size="16" />下载</button
       ><button @click="edit('rename')">重命名</button><button @click="showDetails">文件详情</button
+      ><button @click="currentFile && toggleFavorite(currentFile)">
+        <Star :size="15" />{{ currentFile?.starred ? '取消收藏' : '加入收藏' }}</button
       ><button @click="showMoveUnavailable">移动与复制（尚未接入）</button
       ><button class="danger-text" @click="edit('trash')"><Trash2 :size="16" />移入回收站</button>
     </div>
@@ -1490,11 +1995,13 @@ function showMoveUnavailable() {
             {{
               dialog === 'offline'
                 ? '新建 PikPak 离线任务'
-                : dialog === 'folder'
-                  ? '新建文件夹'
-                  : dialog === 'rename'
-                    ? '重命名'
-                    : '移入回收站'
+                : dialog === 'share'
+                  ? '创建 PikPak 分享'
+                  : dialog === 'folder'
+                    ? '新建文件夹'
+                    : dialog === 'rename'
+                      ? '重命名'
+                      : '移入回收站'
             }}
           </h2>
           <button
@@ -1535,6 +2042,26 @@ function showMoveUnavailable() {
           <p class="muted">
             种子文件仅在本机解析 info hash，Mokawa 不会上传种子文件，也不运行 BT 引擎。最终处理由
             PikPak 云端 API 完成。
+          </p>
+        </template>
+        <template v-else-if="dialog === 'share'">
+          <label
+            >有效期<select v-model.number="shareExpiration" :disabled="writing">
+              <option :value="1">1 天</option>
+              <option :value="7">7 天</option>
+              <option :value="30">30 天</option>
+            </select></label
+          >
+          <label class="check-setting"
+            ><input
+              v-model="sharePassword"
+              type="checkbox"
+              :disabled="writing"
+            />要求访问提取码</label
+          >
+          <p class="muted">
+            分享由 PikPak 云端创建。若 API 不支持当前 PAT 权限，Mokawa
+            会保留账号连接并显示权限错误。
           </p>
         </template>
         <template v-else-if="dialog === 'trash'"

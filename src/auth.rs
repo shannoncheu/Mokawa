@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[serde(rename_all = "snake_case")]
 pub enum AuthMethod {
     #[default]
+    #[serde(rename = "oauth", alias = "o_auth")]
     OAuth,
     PersonalAccessToken,
 }
