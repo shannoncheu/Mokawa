@@ -67,6 +67,9 @@ jobs:
       - name: Verify custom titlebar controls
         shell: pwsh
         run: ./scripts/windows-window-controls.ps1 -Executable "$env:LOCALAPPDATA/Programs/Mokawa/mokawa.exe"
+      - name: Verify persisted native themes
+        shell: pwsh
+        run: ./scripts/windows-theme.ps1 -Executable "$env:LOCALAPPDATA/Programs/Mokawa/mokawa.exe"
       - name: Sample idle resources and repeated window shutdown
         shell: pwsh
         run: ./scripts/windows-performance.ps1 -Executable "$env:LOCALAPPDATA/Programs/Mokawa/mokawa.exe" -Seconds 15 -Cycles 3
@@ -93,6 +96,7 @@ jobs:
             dist/performance.csv
             dist/performance.json
             dist/window-controls.json
+            dist/theme-results.json
             dist/*.png
             target/release/mokawa.exe
             target/release/mokawa-auth.exe

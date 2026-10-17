@@ -157,7 +157,10 @@ impl Mokawa {
             let _ = this.update(cx, |this, cx| {
                 this.busy = false;
                 this.status = match result {
-                    Ok(()) => "已退出登录，本地会话已删除。".into(),
+                    Ok(()) => {
+                        this.has_saved_session = false;
+                        "已退出登录，本地会话已删除。".into()
+                    }
                     Err(error) => format!("本地会话清理失败：{error} 请重试。"),
                 };
                 cx.notify();
@@ -206,8 +209,8 @@ impl Mokawa {
             .gap_4()
             .overflow_y_scroll();
         body = match self.page {
-            Page::Login => body.items_center().justify_center()
-                .child(div().w_full().max_w(px(480.)).p_8().rounded_xl().bg(rgb(0x191c28)).flex().flex_col().gap_4()
+            Page::Login => body.items_center().justify_start()
+                .child(div().w_full().max_w(px(480.)).p_6().rounded_xl().bg(rgb(0x191c28)).flex().flex_col().gap_4()
                     .child(div().text_color(rgb(0x949ce5)).text_3xl().child("Mokawa"))
                     .child(div().text_2xl().child("连接 PikPak 账号"))
                     .child(div().text_sm().text_color(rgb(0xaab3ce)).child("使用 PikPak 官方授权连接网盘，凭据仅保存在 Windows 凭据管理器中。"))
@@ -216,9 +219,10 @@ impl Mokawa {
                     })))
                     .child(div().p_4().rounded_lg().bg(rgb(0x202331)).text_sm().child("授权尚未开放：Mokawa 的官方客户端注册及回调规则仍待确认。当前无法新增登录，不提供未经确认的密码登录。"))
                     .child(Self::button("重试已保存的会话").on_click(cx.listener(|this, _, _, cx| this.request(Operation::List, cx))))
-                    .child(Self::button("取消会话验证").on_click(cx.listener(|this, _, _, cx| {
+                    .when(self.busy, |card| card.child(Self::button("取消会话验证").on_click(cx.listener(|this, _, _, cx| {
                         if this.busy { if let Some(task) = this.task.take() { task.abort(); } this.browser.begin_navigation(); this.busy = false; this.status = "已取消会话验证。".into(); cx.notify(); }
-                    })))
+                    }))))
+                    .when(self.has_saved_session, |card| card.child(Self::button("清除保存的会话").on_click(cx.listener(|this, _, _, cx| this.sign_out(cx)))))
                     .child(Self::button("外观设置").on_click(cx.listener(|this, _, _, cx| { this.page = Page::Settings; cx.notify(); })))
                     .child(Self::button("查看 PikPak 官方授权说明").on_click(|_, _, cx| cx.open_url("https://mypikpak.com/en-US/help-center/connected_apps/managing_connected_apps/what_are_connected_apps")))) ,
             Page::Settings => {
@@ -423,12 +427,16 @@ impl Mokawa {
                     };
                     match saved_session {
                         Ok(_) => {
+                            this.has_saved_session = true;
                             if this.page == Page::Login && !this.busy {
                                 this.request(Operation::List, cx);
                             }
                         }
                         Err(Error::NoSession) => {}
-                        Err(error) => this.status = error.to_string(),
+                        Err(error) => {
+                            this.has_saved_session = matches!(error, Error::InvalidSession);
+                            this.status = error.to_string();
+                        }
                     }
                     this.search.update(cx, |_, cx| cx.notify());
                     this.name.update(cx, |_, cx| cx.notify());

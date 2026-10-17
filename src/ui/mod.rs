@@ -24,6 +24,7 @@ actions!(mokawa, [Refresh, Quit]);
 struct Mokawa {
     browser: BrowserState,
     authenticated: bool,
+    has_saved_session: bool,
     theme_mode: mokawa::settings::ThemeMode,
     appearance_subscription: Option<Subscription>,
     page: Page,
@@ -124,6 +125,7 @@ impl Mokawa {
                 match result {
                     Ok(files) => {
                         this.authenticated = true;
+                        this.has_saved_session = true;
                         this.page = Page::Files;
                         let count = files.len();
                         this.browser.apply(generation, files);
@@ -679,6 +681,7 @@ pub fn run() {
                     let mut view = Mokawa {
                         browser: BrowserState::default(),
                         authenticated: false,
+                        has_saved_session: false,
                         theme_mode: smoke_theme().unwrap_or_default(),
                         appearance_subscription: None,
                         page: match std::env::args()
