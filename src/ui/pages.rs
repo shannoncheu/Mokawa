@@ -369,11 +369,9 @@ impl Mokawa {
                             credentials::save_if_current(&session, epoch)?;
                         }
                         let details=tokio::select!{_ = download_scope.cancelled()=>return Err(Error::Cancelled),result=api.file_details(&session,&file.id)=>result?};
+                        let content_link = details.preferred_content_link()?.to_owned();
                         if credentials::generation() != epoch {
                             return Err(Error::Cancelled);
-                        }
-                        if details.web_content_link.is_empty() {
-                            return Err(Error::Protocol);
                         }
                         let id = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
@@ -390,7 +388,7 @@ impl Mokawa {
                         };
                         drop(preparation);
                         center
-                            .run_cancellable(record, details.web_content_link, directory,download_scope)
+                            .run_cancellable(record, content_link, directory,download_scope)
                             .await?;
                         Ok(())
                     });

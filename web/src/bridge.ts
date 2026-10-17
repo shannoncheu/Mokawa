@@ -15,6 +15,7 @@ export async function call<T>(command: string, args?: Record<string, unknown>): 
       },
       hasSession: false,
       canClearSession: false,
+      authMethod: null,
       authorizationReady: false,
       warning: null,
     } as T
@@ -26,7 +27,7 @@ export async function call<T>(command: string, args?: Record<string, unknown>): 
   if (command === 'transfer_snapshot')
     return { records: [], errors: {}, speeds: {}, persistence_error: null } as T
   throw {
-    code: command === 'list_files' ? 'authentication' : 'operation',
+    code: command === 'list_files' ? 'no_session' : 'operation',
     message:
       command === 'begin_authorization'
         ? 'PikPak 授权尚未接入：Mokawa 客户端注册与回调规则仍待确认。'

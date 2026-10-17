@@ -2,11 +2,11 @@
 mod store;
 use mokawa::{
     api::Api,
-    auth::{Registration, Session},
+    auth::{AuthMethod, Registration, Session},
     credentials,
     error::Error,
     files::ConfirmedDeletion,
-    models::{File, OfflineTask, TransferPhase, TransferRecord},
+    models::{File, OfflineTask, Share, TransferPhase, TransferRecord},
     personalization::Personalization,
     transfers::TransferCenter,
 };
@@ -28,13 +28,18 @@ struct CommandError {
 impl From<Error> for CommandError {
     fn from(error: Error) -> Self {
         let code = match error {
-            Error::Unauthorized
-            | Error::NoSession
-            | Error::InvalidSession
-            | Error::Credentials
-            | Error::VerificationRequired
-            | Error::ClientRegistrationRequired => "authentication",
-            Error::AccessDenied => "permission",
+            Error::Unauthorized => "unauthorized",
+            Error::NoSession => "no_session",
+            Error::InvalidSession => "invalid_session",
+            Error::Credentials => "credential_store",
+            Error::AccessDenied | Error::UnsupportedPermission => "permission",
+            Error::Protocol => "protocol",
+            Error::ProtocolResponse { .. } => "protocol",
+            Error::Network => "network",
+            Error::RateLimited => "rate_limited",
+            Error::Http(_) => "http",
+            Error::Api => "api",
+            Error::VerificationRequired | Error::ClientRegistrationRequired => "authorization",
             Error::Cancelled => "cancelled",
             _ => "operation",
         };
@@ -137,6 +142,7 @@ struct PublicFile {
     size: u64,
     modified_time: String,
     mime_type: String,
+    starred: bool,
 }
 impl From<File> for PublicFile {
     fn from(file: File) -> Self {
@@ -147,6 +153,7 @@ impl From<File> for PublicFile {
             size: file.size,
             modified_time: file.modified_time,
             mime_type: file.mime_type,
+            starred: file.starred,
         }
     }
 }
@@ -156,6 +163,7 @@ struct Bootstrap {
     appearance: store::Appearance,
     has_session: bool,
     can_clear_session: bool,
+    auth_method: Option<AuthMethod>,
     authorization_ready: bool,
     warning: Option<String>,
 }
@@ -166,16 +174,17 @@ async fn bootstrap(state: State<'_, Shared>) -> Reply<Bootstrap> {
     let result = tauri::async_runtime::spawn_blocking(credentials::load)
         .await
         .map_err(|_| CommandError::from(Error::Credentials))?;
-    let (has_session, can_clear_session, warning) = match result {
-        Ok(_) => (true, true, None),
-        Err(Error::NoSession) => (false, false, None),
-        Err(Error::InvalidSession) => (false, true, Some(Error::InvalidSession.to_string())),
-        Err(e) => (false, false, Some(e.to_string())),
+    let (has_session, can_clear_session, auth_method, warning) = match result {
+        Ok(session) => (true, true, Some(session.auth_method), None),
+        Err(Error::NoSession) => (false, false, None, None),
+        Err(Error::InvalidSession) => (false, true, None, Some(Error::InvalidSession.to_string())),
+        Err(e) => (false, false, None, Some(e.to_string())),
     };
     Ok(Bootstrap {
         appearance,
         has_session,
         can_clear_session,
+        auth_method,
         authorization_ready: false,
         warning,
     })
@@ -287,6 +296,64 @@ async fn storage_quota(state: State<'_, Shared>) -> Reply<mokawa::models::DriveQ
         .await?
         .quota
         .unwrap_or_default())
+}
+#[tauri::command]
+async fn list_favorites(state: State<'_, Shared>) -> Reply<Vec<PublicFile>> {
+    let _slot = state.files.clone().try_acquire_owned()
+        .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
+    let session = state.session().await?;
+    Ok(state.api.list_favorites(&session).await?.into_iter().map(PublicFile::from).collect())
+}
+#[tauri::command]
+async fn set_favorite(state: State<'_, Shared>, id: String, starred: bool) -> Reply<()> {
+    let _slot = state.files.clone().try_acquire_owned()
+        .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
+    let session = state.session().await?;
+    state.api.set_favorite(&session, &id, starred).await.map_err(Into::into)
+}
+#[tauri::command]
+async fn list_trash(state: State<'_, Shared>) -> Reply<Vec<PublicFile>> {
+    let _slot = state.files.clone().try_acquire_owned()
+        .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
+    let session = state.session().await?;
+    Ok(state.api.list_files(&session, "", true).await?.into_iter().map(PublicFile::from).collect())
+}
+#[tauri::command]
+async fn restore_files(state: State<'_, Shared>, ids: Vec<String>) -> Reply<()> {
+    let _slot = state.files.clone().try_acquire_owned()
+        .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
+    let session = state.session().await?;
+    state.api.restore_files(&session, &ids).await.map_err(Into::into)
+}
+#[tauri::command]
+async fn permanently_delete_files(state: State<'_, Shared>, ids: Vec<String>, confirmed: bool) -> Reply<()> {
+    if !confirmed { return Err(Error::ConfirmationRequired.into()); }
+    let _slot = state.files.clone().try_acquire_owned()
+        .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
+    let session = state.session().await?;
+    state.api.permanently_delete(&session, &ids).await.map_err(Into::into)
+}
+#[tauri::command]
+async fn list_shares(state: State<'_, Shared>) -> Reply<Vec<Share>> {
+    let _slot = state.files.clone().try_acquire_owned()
+        .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
+    let session = state.session().await?;
+    state.api.list_shares(&session).await.map_err(Into::into)
+}
+#[tauri::command]
+async fn create_share(state: State<'_, Shared>, ids: Vec<String>, expiration_days: u32, require_pass_code: bool) -> Reply<Share> {
+    let _slot = state.files.clone().try_acquire_owned()
+        .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
+    let session = state.session().await?;
+    state.api.create_share(&session, &ids, expiration_days, require_pass_code).await.map_err(Into::into)
+}
+#[tauri::command]
+async fn delete_shares(state: State<'_, Shared>, ids: Vec<String>, confirmed: bool) -> Reply<()> {
+    if !confirmed { return Err(Error::ConfirmationRequired.into()); }
+    let _slot = state.files.clone().try_acquire_owned()
+        .map_err(|_| CommandError::from(Error::Invalid("请求繁忙，请稍后重试")))?;
+    let session = state.session().await?;
+    state.api.delete_shares(&session, &ids).await.map_err(Into::into)
 }
 #[tauri::command]
 async fn preview_content_link(
@@ -421,14 +488,12 @@ async fn start_downloads(state: &Backend, ids: Vec<String>) -> Reply<Option<Stri
         if epoch != credentials::generation() || scope.is_cancelled() {
             return Err(Error::Cancelled.into());
         }
-        if file.web_content_link.is_empty() {
-            return Err(Error::Protocol.into());
-        }
-        items.push((id, file));
+        let content_link = file.preferred_content_link()?.to_owned();
+        items.push((id, file, content_link));
     }
     let required = items
         .iter()
-        .try_fold(0u64, |sum, (_, f)| sum.checked_add(f.size))
+        .try_fold(0u64, |sum, (_, f, _)| sum.checked_add(f.size))
         .ok_or_else(|| CommandError::from(Error::Invalid("下载文件总大小超出范围")))?;
     let check_dir = directory.clone();
     let available = tauri::async_runtime::spawn_blocking(move || fs2::available_space(check_dir))
@@ -449,7 +514,7 @@ async fn start_downloads(state: &Backend, ids: Vec<String>) -> Reply<Option<Stri
     );
     let center = state.center.clone();
     let admission = Arc::new(admission);
-    for (index, (id, file)) in items.into_iter().enumerate() {
+    for (index, (id, file, content_link)) in items.into_iter().enumerate() {
         let record = TransferRecord {
             id: format!("{task_id}-{index}"),
             file_id: id,
@@ -465,7 +530,7 @@ async fn start_downloads(state: &Backend, ids: Vec<String>) -> Reply<Option<Stri
         tauri::async_runtime::spawn(async move {
             let _admission = admission;
             let _ = center
-                .run_cancellable(record, file.web_content_link, directory, scope)
+                .run_cancellable(record, content_link, directory, scope)
                 .await;
         });
     }
@@ -594,7 +659,7 @@ pub fn run() {
             if let Some(window)=app.get_webview_window("main") { let _=window.unminimize();let _=window.show();let _=window.set_focus(); }
         }))
         .manage(backend.clone())
-        .invoke_handler(tauri::generate_handler![bootstrap,begin_authorization,connect_personal_access_token,open_auth_help,save_appearance,choose_image,remove_image,cancel_page,cancel_preview,list_files,storage_quota,preview_content_link,text_preview,create_folder,rename_file,trash_files,sign_out,start_download,start_download_batch,transfer_snapshot,cancel_transfer,offline_tasks,create_offline_task,retry_offline_task,delete_offline_task,choose_torrent])
+        .invoke_handler(tauri::generate_handler![bootstrap,begin_authorization,connect_personal_access_token,open_auth_help,save_appearance,choose_image,remove_image,cancel_page,cancel_preview,list_files,list_favorites,set_favorite,list_trash,restore_files,permanently_delete_files,list_shares,create_share,delete_shares,storage_quota,preview_content_link,text_preview,create_folder,rename_file,trash_files,sign_out,start_download,start_download_batch,transfer_snapshot,cancel_transfer,offline_tasks,create_offline_task,retry_offline_task,delete_offline_task,choose_torrent])
         .setup(|app|{
             if let Some(window)=app.get_webview_window("main") && let Some(monitor)=window.current_monitor()? {
                 let area=monitor.work_area();let scale=monitor.scale_factor();
