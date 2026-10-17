@@ -46,3 +46,26 @@ Linux 不编译 GPUI，不能代替 Windows 验证。脚本打开真实空闲任
 尚待执行/实现：大文件流式下载内存预算、网络断开与读取超时的实测、强制中止临时文件清理的 Windows 验证、GPUI Entity 生命周期压力、文件列表渲染耗时及高 DPI、休眠唤醒、真实 Token 过期和重新认证、24 小时 soak、上传及媒体资源生命周期。现有下载使用流式响应而非整体读入，但尚无证明单连接最大内存预算的压力数据。
 
 存在可复现资源残留或持续异常增长时阻止正式发布；当前仍是功能不完整的预览版本。
+
+## 2026-10-17 实际验收记录
+
+代码：`df86508f41e3a2201a6d4ffe7d2410b2753a4030`。
+Windows Server 2022 GitHub Runner：[39006709784](https://github.com/shannoncheu/Mokawa/actions/runs/39006709784)，全部成功。此环境不是 Windows 10/11 实机。
+
+修改文件：`src/transfers.rs`（准入、RAII、事件通知和测试）、`src/download.rs`（临时文件所有权、超时、节流、持久化读上限和测试）、`src/state.rs`（排序索引）、`src/ui/mod.rs`（虚拟列表、防抖、运行时预算）、`src/ui/pages.rs`（通知订阅、准备并发）、`tests/core.rs`、`scripts/windows-performance.ps1`、`.github/workflows/windows.yml`、本文件及基线产物。
+
+实际执行：`cargo fmt --check`；`cargo test --locked --all-targets`；`cargo check --locked --features desktop --all-targets`；`cargo clippy --locked --features desktop --all-targets -- -D warnings`；`cargo build --locked --release --features desktop --bins`；NSIS 构建、静默安装、`scripts/windows-smoke.ps1`、`scripts/windows-performance.ps1 -Seconds 15 -Cycles 3`、静默卸载。Windows **22 项测试通过**（4 单元 + 17 核心/Mock + 1 系统凭据测试）。本地 Linux 21 项通过，Windows 凭据测试按平台不运行；不以此替代 Windows UI 编译。
+
+五个真实原生窗口场景通过：登录、文件、任务、设置及小窗口；含工作区尺寸检查。真实账号仍未接入，空文件页面测试不能验证大量文件实际渲染。三轮任务页空闲采样均能正常关闭退出。
+
+| 轮次 | 最大工作集 MiB | Private Bytes 首→尾 MiB | 最大线程数 | 句柄首→尾 |
+|---|---:|---:|---:|---:|
+| 1 | 33.40 | 27.13 → 27.08 | 15 | 297 → 297 |
+| 2 | 33.43 | 27.30 → 27.22 | 16 | 298 → 297 |
+| 3 | 33.32 | 26.97 → 26.88 | 16 | 298 → 297 |
+
+三轮每秒进程 CPU 时间差均测得 0，受短采样和计时分辨率限制，不能解释为绝对零 CPU。没有观察到本次短时采样内 Private Bytes 或句柄持续增长；不构成零泄漏证明。原始 CSV/JSON：`docs/performance/windows-2022-idle-df86508.*`。正式 Windows 10/11 内存/CPU/响应预算仍待长时间和实际负载测量后确定，不将这些空载值用作所有任务的硬性上限。
+
+本地 10 万文件索引筛选/排序实测约 19.5ms（debug 构建、单次、Linux；不是 GPUI 帧耗时）。新增测试曾触发 `field_reassign_with_default` 严格 lint，已修复并重新通过。两次中间 CI 为节省资源主动取消，不计成功；最终上述 run 是最新代码的完整验证。
+
+下一阶段：有界 API 响应与分页总量、文件索引缓存、同进程 Entity 压力测试、流式大文件和网络中断压力测试、Windows 10/11 一小时及 24 小时资源曲线。真实认证、休眠唤醒、高 DPI、媒体/上传生命周期和完整 P0/P1 仍未验证，不进入正式发布。

@@ -1,0 +1,32 @@
+[
+  {
+    "Cycle": "1",
+    "MeanCpuOneCorePercent": 0.0,
+    "FirstPrivateBytes": 28442624,
+    "LastPrivateBytes": 28397568,
+    "MaxWorkingSetBytes": 35020800.0,
+    "MaxThreads": 15.0,
+    "FirstHandles": 297,
+    "LastHandles": 297
+  },
+  {
+    "Cycle": "2",
+    "MeanCpuOneCorePercent": 0.0,
+    "FirstPrivateBytes": 28626944,
+    "LastPrivateBytes": 28540928,
+    "MaxWorkingSetBytes": 35049472.0,
+    "MaxThreads": 16.0,
+    "FirstHandles": 298,
+    "LastHandles": 297
+  },
+  {
+    "Cycle": "3",
+    "MeanCpuOneCorePercent": 0.0,
+    "FirstPrivateBytes": 28274688,
+    "LastPrivateBytes": 28184576,
+    "MaxWorkingSetBytes": 34938880.0,
+    "MaxThreads": 16.0,
+    "FirstHandles": 298,
+    "LastHandles": 297
+  }
+]
