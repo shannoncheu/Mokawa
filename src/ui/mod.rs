@@ -143,7 +143,7 @@ impl Mokawa {
                                 | Error::NoSession
                                 | Error::InvalidSession
                                 | Error::ClientRegistrationRequired
-                                | Error::VerificationRequired
+                                | Error::VerificationRequired(_)
                         );
                         if requires_login {
                             this.authenticated = false;

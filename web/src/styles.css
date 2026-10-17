@@ -1681,6 +1681,37 @@ progress::-webkit-progress-value {
   text-align: center;
   font-size: 23px;
 }
+.login-method-heading {
+  margin: 10px 0 -5px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.client-registration {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  font-size: 12px;
+}
+.client-registration summary {
+  color: var(--accent-text);
+  cursor: pointer;
+  font-weight: 600;
+}
+.client-registration p {
+  color: var(--muted-text);
+  font-size: 11px;
+  line-height: 1.8;
+}
+.client-registration label {
+  display: block;
+  margin: 10px 0 5px;
+}
+.client-registration input {
+  width: 100%;
+}
+.client-registration button {
+  width: 100%;
+  margin-top: 10px;
+}
 .login-card > p:first-of-type {
   text-align: center;
   font-size: 12px;

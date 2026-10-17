@@ -71,8 +71,13 @@ let returnFocus: HTMLElement | null = null
 const page = ref('login')
 const authenticated = ref(false)
 const authMethod = ref<'oauth' | 'personal_access_token' | null>(null)
+const passwordLoginReady = ref(false)
 const busy = ref(false)
 const personalAccessToken = ref('')
+const passwordUsername = ref('')
+const passwordValue = ref('')
+const clientIdInput = ref('')
+const clientSecretInput = ref('')
 const booting = ref(true)
 const status = ref('')
 const files = shallowRef<CloudFile[]>([])
@@ -662,6 +667,54 @@ async function connectPersonalAccessToken() {
     busy.value = false
   }
 }
+async function savePasswordClientRegistration() {
+  if (busy.value) return
+  const clientId = clientIdInput.value.trim()
+  const clientSecret = clientSecretInput.value
+  clientSecretInput.value = ''
+  if (!clientId || !clientSecret) {
+    status.value = '请输入 PikPak 官方为你的应用签发的客户端 ID 和 Secret。'
+    return
+  }
+  busy.value = true
+  status.value = '正在将客户端注册信息保存到 Windows 凭据管理器…'
+  try {
+    await call('save_password_client_registration', { clientId, clientSecret })
+    passwordLoginReady.value = true
+    clientIdInput.value = ''
+    status.value = '客户端注册信息已安全保存。现在可以尝试账号密码登录。'
+  } catch (error) {
+    report(error)
+  } finally {
+    clientSecretInput.value = ''
+    busy.value = false
+  }
+}
+async function loginWithPassword() {
+  if (busy.value) return
+  const username = passwordUsername.value.trim()
+  const password = passwordValue.value
+  passwordValue.value = ''
+  if (!username || !password) {
+    status.value = '请输入 PikPak 用户名/邮箱和密码。'
+    return
+  }
+  busy.value = true
+  status.value = '正在向 PikPak 验证账号并读取文件…'
+  try {
+    await call('login_with_password', { username, password })
+    authMethod.value = 'oauth'
+    hasSavedSession.value = true
+    passwordLoginReady.value = true
+    path.value = []
+    await load()
+  } catch (error) {
+    report(error)
+  } finally {
+    passwordValue.value = ''
+    busy.value = false
+  }
+}
 function cancelLogin() {
   requestGeneration++
   busy.value = false
@@ -971,6 +1024,7 @@ onMounted(async () => {
     if (disposed) return
     hasSavedSession.value = result.canClearSession
     authMethod.value = result.authMethod
+    passwordLoginReady.value = result.authorizationReady
     try {
       const saved = JSON.parse(localStorage.getItem('mokawa-recent-visits') || '[]')
       recentVisits.value = Array.isArray(saved)
@@ -1182,6 +1236,78 @@ function contextShare() {
           <i class="brand-mark hero">M</i>
           <h1>连接 PikPak 账号</h1>
           <p>连接后，在 Mokawa 管理你的 PikPak 文件。</p>
+          <h2 class="login-method-heading">账号密码登录</h2>
+          <label for="pikpak-username">PikPak 用户名或邮箱</label>
+          <input
+            id="pikpak-username"
+            v-model="passwordUsername"
+            type="text"
+            autocomplete="username"
+            spellcheck="false"
+            :disabled="busy"
+            placeholder="用户名或邮箱"
+          />
+          <label for="pikpak-password">密码</label>
+          <input
+            id="pikpak-password"
+            v-model="passwordValue"
+            type="password"
+            autocomplete="current-password"
+            :disabled="busy"
+            placeholder="PikPak 密码"
+            @keydown.enter.prevent="loginWithPassword"
+          />
+          <button
+            class="primary full"
+            :disabled="busy || !passwordUsername.trim() || !passwordValue"
+            @click="loginWithPassword"
+          >
+            <LoaderCircle v-if="busy" class="spin" :size="17" />
+            {{ busy ? '正在连接 PikPak…' : '使用账号密码登录' }}
+          </button>
+          <small class="privacy">
+            密码只由本机 Rust 后端经 HTTPS 发送至 PikPak；登录验证通过后仅保存
+            Token。密码不会写入配置、日志或 Mokawa 服务器。Google 等第三方账号请确认已在 PikPak
+            官方渠道设置独立密码。
+          </small>
+          <details class="client-registration" :open="!passwordLoginReady">
+            <summary>
+              {{ passwordLoginReady ? '更换客户端注册信息' : '配置客户端注册信息' }}
+            </summary>
+            <p>
+              账号密码接口要求 client_id 与 client_secret。请仅填写 PikPak
+              官方为你授权的客户端凭据；OpenList 和 pikpaktui
+              中的平台身份与验证码签名属于各自应用，Mokawa 不会复制或冒用。
+            </p>
+            <label for="pikpak-client-id">客户端 ID</label>
+            <input
+              id="pikpak-client-id"
+              v-model="clientIdInput"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              :disabled="busy"
+            />
+            <label for="pikpak-client-secret">客户端 Secret</label>
+            <input
+              id="pikpak-client-secret"
+              v-model="clientSecretInput"
+              type="password"
+              autocomplete="new-password"
+              :disabled="busy"
+            />
+            <button
+              :disabled="busy || !clientIdInput.trim() || !clientSecretInput"
+              @click="savePasswordClientRegistration"
+            >
+              保存到 Windows 凭据管理器
+            </button>
+            <small v-if="passwordLoginReady" class="privacy">已配置客户端注册凭据。</small>
+            <small v-else class="privacy">
+              当前尚未配置客户端注册凭据；密码不会发送，直到配置完成。若你没有获授权的客户端凭据，请向
+              PikPak 官方申请或使用下方兼容连接方式。
+            </small>
+          </details>
           <div class="auth-note">
             <CircleAlert :size="18" /><span
               >个人访问令牌<br /><small
@@ -1217,20 +1343,6 @@ function contextShare() {
           <button class="text-button" disabled title="等待 PikPak 为 Mokawa 明确桌面客户端授权契约">
             使用 PikPak 浏览器授权（尚未开放）
           </button>
-          <button
-            class="text-button"
-            disabled
-            title="PikPak 官方 CLI 文档标注密码登录已不再支持；旧客户端依赖未授权的平台客户端身份"
-          >
-            用户名/邮箱与密码登录（PikPak 当前不支持）
-          </button>
-          <small class="privacy"
-            >旧版公开客户端把密码发送到 /v1/auth/signin，并依赖其平台
-            client_id/client_secret、设备参数和验证码；官方 CLI 已说明密码登录不再支持。Mokawa
-            不会复制这些身份参数、绕过验证码或收集你的密码。请通过 PikPak
-            支持的第三方登录方式建立账号会话，再按官方授权流程连接；Google 等第三方账号还需确认
-            PikPak 是否允许设置独立密码。</small
-          >
           <div class="local-history-links">
             <button class="text-button" @click="route('recent')">
               <Clock3 :size="15" />查看本机最近访问

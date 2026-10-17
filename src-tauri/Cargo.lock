@@ -2206,6 +2206,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "uuid",
  "webbrowser",
 ]
 

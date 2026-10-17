@@ -43,17 +43,17 @@ impl Api {
     pub(crate) async fn user_request<T: DeserializeOwned>(
         &self,
         path: &str,
+        registration: &crate::auth::Registration,
+        device_id: &str,
         body: &impl Serialize,
     ) -> Result<T> {
-        Self::decode(
-            self.http
-                .post(format!("{}{path}", self.user))
-                .json(body)
-                .send()
-                .await?,
-            false,
-        )
-        .await
+        let request = self
+            .http
+            .post(format!("{}{path}", self.user))
+            .query(&[("client_id", registration.client_id.as_str())])
+            .header("x-device-id", device_id)
+            .json(body);
+        Self::decode(request.send().await?, false).await
     }
     pub(crate) async fn drive_request<T: DeserializeOwned>(
         &self,

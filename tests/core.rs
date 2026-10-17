@@ -6,6 +6,7 @@ use mokawa::{
     models::{File, TransferPhase, TransferRecord},
     state::BrowserState,
 };
+use wiremock::matchers::body_json;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{header, method, path, query_param},
@@ -328,15 +329,91 @@ async fn login_captcha_stops_before_password_submission() {
             .unwrap()
             .login(&reg, "account", &"password".into(), "device")
             .await,
-        Err(Error::VerificationRequired)
+        Err(Error::VerificationRequired(Some(url))) if url == "https://example.test/challenge"
     ));
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+#[tokio::test]
+async fn password_login_uses_device_and_registered_client_then_reads_drive() {
+    let server = MockServer::start().await;
+    let client_id = "registered-client";
+    let device_id = "device-123";
+    Mock::given(path("/v1/shield/captcha/init"))
+        .and(method("POST"))
+        .and(query_param("client_id", client_id))
+        .and(header("x-device-id", device_id))
+        .and(body_json(serde_json::json!({
+            "client_id": client_id,
+            "device_id": device_id,
+            "action": "POST:/v1/auth/signin",
+            "meta": {"email": "user@example.test"}
+        })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"captcha_token":"mock-captcha"})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(path("/v1/auth/signin"))
+        .and(method("POST"))
+        .and(query_param("client_id", client_id))
+        .and(header("x-device-id", device_id))
+        .and(body_json(serde_json::json!({
+            "client_id": client_id,
+            "client_secret": "registered-secret",
+            "grant_type": "password",
+            "username": "user@example.test",
+            "password": "mock-password",
+            "captcha_token": "mock-captcha"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token":"mock-access","refresh_token":"mock-refresh","expires_in":3600
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(path("/drive/v1/files"))
+        .and(method("GET"))
+        .and(header("authorization", "Bearer mock-access"))
+        .and(header("x-device-id", device_id))
+        .and(header("x-captcha-token", "mock-captcha"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"files":[]})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let registration =
+        Registration::from_values(client_id.into(), "registered-secret".into()).unwrap();
+    let api = Api::for_mock(&server.uri()).unwrap();
+    assert!(!format!("{registration:?}").contains("registered-secret"));
+    let session = api
+        .login(
+            &registration,
+            "user@example.test",
+            &"mock-password".into(),
+            device_id,
+        )
+        .await
+        .unwrap();
+    assert_eq!(api.list_files(&session, "", false).await.unwrap().len(), 0);
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 3);
+    assert!(!format!("{session:?}").contains("mock-access"));
 }
 #[tokio::test]
 async fn refresh_retains_rotates_and_expires() {
     let server = MockServer::start().await;
     Mock::given(path("/v1/auth/token"))
         .and(method("POST"))
+        .and(query_param("client_id", "mokawa-test"))
+        .and(header("x-device-id", "device"))
+        .and(body_json(serde_json::json!({
+            "client_id":"mokawa-test",
+            "client_secret":"test",
+            "grant_type":"refresh_token",
+            "refresh_token":"secret-refresh"
+        })))
         .respond_with(ResponseTemplate::new(200).set_body_json(
             serde_json::json!({"access_token":"new","refresh_token":"rotated","expires_in":3600}),
         ))

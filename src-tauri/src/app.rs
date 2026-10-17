@@ -39,7 +39,8 @@ impl From<Error> for CommandError {
             Error::RateLimited => "rate_limited",
             Error::Http(_) => "http",
             Error::Api => "api",
-            Error::VerificationRequired | Error::ClientRegistrationRequired => "authorization",
+            Error::VerificationRequired(_) => "verification_required",
+            Error::ClientRegistrationRequired => "authorization",
             Error::Cancelled => "cancelled",
             _ => "operation",
         };
@@ -92,10 +93,8 @@ impl Backend {
             .await
             .map_err(|_| Error::Credentials)??;
         if session.expired() {
-            session = self
-                .api
-                .refresh(&Registration::from_env()?, &session)
-                .await?;
+            let registration = load_registration().await?;
+            session = self.api.refresh(&registration, &session).await?;
             let saved = session.clone();
             tauri::async_runtime::spawn_blocking(move || {
                 credentials::save_if_current(&saved, epoch)
@@ -132,6 +131,15 @@ impl Backend {
         self.preview.lock().unwrap().1.cancel();
         self.downloads.lock().unwrap().cancel();
         self.center.cancel_all();
+    }
+}
+async fn load_registration() -> mokawa::error::Result<Registration> {
+    let saved = tauri::async_runtime::spawn_blocking(credentials::load_registration)
+        .await
+        .map_err(|_| Error::Credentials)??;
+    match saved {
+        Some(registration) => Ok(registration),
+        None => Registration::from_env(),
     }
 }
 #[derive(Serialize)]
@@ -180,18 +188,80 @@ async fn bootstrap(state: State<'_, Shared>) -> Reply<Bootstrap> {
         Err(Error::InvalidSession) => (false, true, None, Some(Error::InvalidSession.to_string())),
         Err(e) => (false, false, None, Some(e.to_string())),
     };
+    let authorization_ready = load_registration().await.is_ok();
     Ok(Bootstrap {
         appearance,
         has_session,
         can_clear_session,
         auth_method,
-        authorization_ready: false,
+        authorization_ready,
         warning,
     })
 }
 #[tauri::command]
 async fn begin_authorization() -> Reply<()> {
     Err(Error::AuthorizationPending.into())
+}
+#[tauri::command]
+async fn save_password_client_registration(client_id: String, client_secret: String) -> Reply<()> {
+    let registration = Registration::from_values(client_id, client_secret.into())?;
+    tauri::async_runtime::spawn_blocking(move || credentials::save_registration(&registration))
+        .await
+        .map_err(|_| CommandError::from(Error::Credentials))??;
+    Ok(())
+}
+#[tauri::command]
+async fn login_with_password(
+    state: State<'_, Shared>,
+    username: String,
+    password: String,
+) -> Reply<()> {
+    let password: secrecy::SecretString = password.into();
+    let registration = load_registration().await?;
+    let device_id = uuid::Uuid::new_v4().to_string();
+    let _gate = state.session_gate.lock().await;
+    let epoch = credentials::generation();
+    let session = match state
+        .api
+        .login(&registration, &username, &password, &device_id)
+        .await
+    {
+        Ok(session) => session,
+        Err(Error::VerificationRequired(url)) => {
+            if let Some(url) = url.filter(|url| mokawa::auth::trusted_verification_url(url)) {
+                let opened = tauri::async_runtime::spawn_blocking(move || webbrowser::open(&url))
+                    .await
+                    .ok()
+                    .and_then(std::result::Result::ok)
+                    .is_some();
+                if opened {
+                    return Err(CommandError {
+                        code: "verification_required",
+                        message: "PikPak 要求完成安全验证，已在默认浏览器打开验证页。完成后请重新提交登录。"
+                            .into(),
+                    });
+                }
+            }
+            return Err(Error::VerificationRequired(None).into());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    // A successful token must also read a real root page. The password itself
+    // is never persisted; only the refreshed OAuth session is saved.
+    state.api.list_files(&session, "", false).await?;
+    let saved_registration = registration;
+    tauri::async_runtime::spawn_blocking(move || {
+        credentials::save_registration(&saved_registration)
+    })
+    .await
+    .map_err(|_| CommandError::from(Error::Credentials))??;
+    let saved_session = session.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        credentials::save_if_current(&saved_session, epoch)
+    })
+    .await
+    .map_err(|_| CommandError::from(Error::Credentials))??;
+    Ok(())
 }
 #[tauri::command]
 async fn connect_personal_access_token(state: State<'_, Shared>, token: String) -> Reply<()> {
@@ -773,7 +843,7 @@ pub fn run() {
             if let Some(window)=app.get_webview_window("main") { let _=window.unminimize();let _=window.show();let _=window.set_focus(); }
         }))
         .manage(backend.clone())
-        .invoke_handler(tauri::generate_handler![bootstrap,begin_authorization,connect_personal_access_token,open_auth_help,save_appearance,choose_image,remove_image,cancel_page,cancel_preview,list_files,list_favorites,set_favorite,list_trash,restore_files,permanently_delete_files,list_shares,create_share,delete_shares,storage_quota,preview_content_link,text_preview,create_folder,rename_file,trash_files,sign_out,start_download,start_download_batch,transfer_snapshot,cancel_transfer,open_transfer_location,offline_tasks,create_offline_task,retry_offline_task,delete_offline_task,choose_torrent])
+        .invoke_handler(tauri::generate_handler![bootstrap,begin_authorization,save_password_client_registration,login_with_password,connect_personal_access_token,open_auth_help,save_appearance,choose_image,remove_image,cancel_page,cancel_preview,list_files,list_favorites,set_favorite,list_trash,restore_files,permanently_delete_files,list_shares,create_share,delete_shares,storage_quota,preview_content_link,text_preview,create_folder,rename_file,trash_files,sign_out,start_download,start_download_batch,transfer_snapshot,cancel_transfer,open_transfer_location,offline_tasks,create_offline_task,retry_offline_task,delete_offline_task,choose_torrent])
         .setup(|app|{
             if let Some(window)=app.get_webview_window("main") && let Some(monitor)=window.current_monitor()? {
                 let area=monitor.work_area();let scale=monitor.scale_factor();
