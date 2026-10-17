@@ -194,6 +194,12 @@ impl Mokawa {
             cx.notify();
             return;
         };
+        let Ok(admission) = self.download_admission.clone().try_acquire_owned() else {
+            self.status = "Download queue is full. Wait for an existing task to finish.".into();
+            cx.notify();
+            return;
+        };
+        let preparation_slots = self.preparation_slots.clone();
         let epoch = credentials::generation();
         let download_scope = self.download_scope.child_token();
         let picker = cx.prompt_for_paths(PathPromptOptions {
@@ -214,6 +220,11 @@ impl Mokawa {
                     }
                     let center = this.transfers.clone();
                     let job = this.runtime.spawn(async move {
+                        let _admission = admission;
+                        let preparation = tokio::select! {
+                            _ = download_scope.cancelled() => return Err(Error::Cancelled),
+                            slot = preparation_slots.acquire_owned() => slot.map_err(|_| Error::Cancelled)?,
+                        };
                         let api = Api::new()?;
                         let mut session = credentials::load()?;
                         if session.expired() {
@@ -240,6 +251,7 @@ impl Mokawa {
                             total: Some(details.size),
                             phase: TransferPhase::Queued,
                         };
+                        drop(preparation);
                         center
                             .run_cancellable(record, details.web_content_link, directory,download_scope)
                             .await?;

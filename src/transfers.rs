@@ -257,6 +257,7 @@ mod tests {
             TransferPhase::Interrupted
         );
         assert!(center.snapshot().speeds.is_empty());
+        assert_eq!(Arc::strong_count(&center.0), 1);
     }
     #[tokio::test]
     async fn admission_is_bounded_and_duplicate_does_not_replace_token() {

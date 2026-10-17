@@ -23,12 +23,16 @@ struct Mokawa {
     browser: BrowserState,
     page: Page,
     transfers: TransferCenter,
+    download_admission: Arc<tokio::sync::Semaphore>,
+    preparation_slots: Arc<tokio::sync::Semaphore>,
     lifetime: tokio_util::sync::CancellationToken,
     download_scope: tokio_util::sync::CancellationToken,
     hide_details: bool,
     ready: bool,
     saving_preferences: bool,
     search: Entity<TextInput>,
+    search_query: String,
+    search_task: Option<gpui::Task<()>>,
     name: Entity<TextInput>,
     _subscription: Subscription,
     runtime: Arc<tokio::runtime::Runtime>,
@@ -143,7 +147,7 @@ impl Render for Mokawa {
         }
         let files = self
             .browser
-            .visible_indices(self.search.read(cx).content.as_ref(), self.descending);
+            .visible_indices(&self.search_query, self.descending);
         let selected = self
             .browser
             .files
@@ -181,7 +185,8 @@ impl Render for Mokawa {
             .flex_col()
             .gap_1()
             .flex_1()
-            .overflow_y_scroll();
+            .min_h_0()
+            .overflow_hidden();
         if files.is_empty() {
             content = content.child(div().p_8().text_color(rgb(0x9da6be)).child(if self.busy {
                 "Loading your files…"
@@ -464,7 +469,18 @@ pub fn run() {
                 let search = cx.new(|cx| TextInput::new("Search current folder…", cx));
                 let name = cx.new(|cx| TextInput::new("New name…", cx));
                 cx.new(|cx| {
-                    let subscription = cx.observe(&search, |_, _, cx| cx.notify());
+                    let subscription = cx.observe(&search, |this: &mut Mokawa, _, cx| {
+                        let query = this.search.read(cx).content.to_string();
+                        this.search_task = Some(cx.spawn(async move |this, cx| {
+                            cx.background_executor()
+                                .timer(std::time::Duration::from_millis(180))
+                                .await;
+                            let _ = this.update(cx, |this, cx| {
+                                this.search_query = query;
+                                cx.notify();
+                            });
+                        }));
+                    });
                     let mut view = Mokawa {
                         browser: BrowserState::default(),
                         page: match std::env::args()
@@ -477,12 +493,16 @@ pub fn run() {
                             _ => Page::Login,
                         },
                         transfers: Mokawa::new_transfers(),
+                        download_admission: Arc::new(tokio::sync::Semaphore::new(32)),
+                        preparation_slots: Arc::new(tokio::sync::Semaphore::new(4)),
                         lifetime: tokio_util::sync::CancellationToken::new(),
                         download_scope: tokio_util::sync::CancellationToken::new(),
                         hide_details: false,
                         ready: false,
                         saving_preferences: false,
                         search,
+                        search_query: String::new(),
+                        search_task: None,
                         name,
                         _subscription: subscription,
                         runtime: runtime.clone(),
