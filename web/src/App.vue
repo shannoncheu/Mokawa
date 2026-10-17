@@ -174,6 +174,8 @@ function report(error: unknown) {
 }
 async function load() {
   const generation = ++requestGeneration
+  files.value = []
+  selected.value = new Set()
   busy.value = true
   status.value = '正在读取 PikPak 文件…'
   try {

@@ -1,3 +1,5 @@
+> 当前主入口为 Vue 3 + TypeScript + Tauri 2。新增 `web/` 前端与 `src-tauri/` 受限 IPC、本地个性化存储和退出管理；复用根 Rust 核心。迁移结构、安全边界与实际验证见 [Vue 迁移记录](VUE_MIGRATION.md)。下文保留 GPUI 架构及核心模块历史说明，旧入口未删除。
+
 # 架构与分阶段实施计划
 
 UI（GPUI entities / input）→ 业务（auth/files/state/download）→ API（reqwest）→ PikPak。

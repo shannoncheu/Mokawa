@@ -38,7 +38,7 @@ Noto Sans SC 从 Fontsource 本地随包提供，OFL-1.1；无在线字体请求
 ### 本地实际执行
 
 - `npm ci`、`npm run build`、`npm run format:check`：前端生产编译和格式检查通过。
-- `npm test`：9 项通过，包括真实业务交互的 Mock、删除确认、会话失效、设置恢复/防抖/失败重试、图片 URL 回收、Worker 合并和终止，以及虚拟列表生命周期/滚动回归。
+- `npm test`：10 项通过，包括真实业务交互的 Mock、删除确认、会话失效、设置恢复/防抖/失败重试、图片 URL 回收、Worker 合并和终止，以及虚拟列表生命周期/滚动回归。
 - `npm run test:ui`：5 项浏览器测试通过，包括中文登录、两主题和系统主题变化、重载保存、窄窗口、极端背景对比度、十万元数据 Worker 测试。这是 Linux Chromium 范围，不代表 Windows 原生测试。
 - `cargo test --locked --all-targets`：Linux 26 项通过（7 单元 + 19 核心/Mock）；Windows 专用测试不在 Linux 执行。
 - `cargo fmt --check`、核心 `cargo clippy --locked --all-targets -- -D warnings` 和 Tauri 清单格式检查单独执行。Linux 不编译 Tauri Windows 模块，不据此声称原生构建通过。

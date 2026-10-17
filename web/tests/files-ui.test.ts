@@ -94,3 +94,38 @@ it('写操作失去认证时关闭旧对话框并返回登录页', async () => {
   expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
   wrapper.unmount()
 })
+it('切换目录期间不显示或操作上个目录的文件', async () => {
+  const original = transport.call.getMockImplementation()!
+  let calls = 0
+  let complete!: (files: unknown[]) => void
+  transport.call.mockImplementation(async (command: string, ...args: unknown[]) => {
+    if (command === 'list_files') {
+      if (++calls === 1)
+        return [
+          {
+            id: 'folder-a',
+            name: '目录',
+            kind: 'drive#folder',
+            mime_type: '',
+            modified_time: '',
+            size: 0,
+          },
+        ]
+      return new Promise((resolve) => {
+        complete = resolve
+      })
+    }
+    return original(command, ...args)
+  })
+  const wrapper = mount(App)
+  await flushPromises()
+  await wrapper.find('.file-item').trigger('dblclick')
+  await flushPromises()
+  expect(wrapper.findAll('.file-item')).toHaveLength(0)
+  expect(wrapper.text()).toContain('正在加载文件')
+  expect(wrapper.find('.selection-toolbar').exists()).toBe(false)
+  complete([])
+  await flushPromises()
+  expect(wrapper.text()).toContain('这里还没有文件')
+  wrapper.unmount()
+})

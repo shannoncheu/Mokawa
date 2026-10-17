@@ -9,6 +9,7 @@ public static class MokawaTauriControls {
     [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out Rect r);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out Rect r);
     [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref Point p);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
@@ -76,18 +77,24 @@ try {
     $after = New-Object MokawaTauriControls+Rect
     $null = [MokawaTauriControls]::GetWindowRect($handle,[ref]$after)
     if ($after.Left -eq $before.Left -and $after.Top -eq $before.Top) { @{before=$before;after=$after} | ConvertTo-Json | Set-Content dist/tauri-drag-error.json; throw 'Caption drag did not move window' }
+    # Return to the original in-work-area position after proving drag. Small Runner screens
+    # otherwise clip the rightmost close target after moving an almost full-width window.
+    $null = [MokawaTauriControls]::SetWindowPos($handle,[IntPtr]::Zero,$before.Left,$before.Top,0,0,21)
+    Start-Sleep -Milliseconds 300
     $null = [MokawaTauriControls]::GetClientRect($handle,[ref]$rect)
     $null = Move-ToClient $handle ($rect.Right-112) 22
     Click-Pointer
     Start-Sleep -Milliseconds 500
     if (![MokawaTauriControls]::IsIconic($handle)) { throw 'Minimize did not minimize' }
     $null = [MokawaTauriControls]::ShowWindow($handle,9)
-    Start-Sleep -Milliseconds 300
+    $null = [MokawaTauriControls]::SetForegroundWindow($handle)
+    Start-Sleep -Milliseconds 700
+    $null = [MokawaTauriControls]::GetClientRect($handle,[ref]$rect)
     $null = Move-ToClient $handle ($rect.Right-22) 22
     Click-Pointer
     if (!$process.WaitForExit(10000)) { throw 'Close button did not exit' }
     if ($process.ExitCode -ne 0) { throw 'Window controls process exited with error' }
-    @{status='passed';  maximize=$true; restore=$true; doubleClick=$true; drag=$true; minimize=$true; close=$true} | ConvertTo-Json | Set-Content -Encoding utf8 dist/tauri-window-controls.json
+    @{beforeDrag=$before;afterDrag=$after;status='passed';  maximize=$true; restore=$true; doubleClick=$true; drag=$true; minimize=$true; close=$true} | ConvertTo-Json | Set-Content -Encoding utf8 dist/tauri-window-controls.json
 } finally {
     if (!$process.HasExited) { $process.Kill() }
     $process.Dispose()
