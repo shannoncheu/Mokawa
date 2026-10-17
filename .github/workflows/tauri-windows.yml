@@ -27,6 +27,7 @@ jobs:
         run: |
           npm test
           npm run build
+          npm run licenses
       - name: Format
         run: |
           cargo fmt --check
