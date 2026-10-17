@@ -96,12 +96,21 @@ impl Mokawa {
             ("⚙", "设置", Page::Settings),
         ] {
             nav = nav.child(
-                Self::button(label)
+                div()
+                    .id(SharedString::from(format!("nav-{label}")))
+                    .px_3()
                     .py_1()
+                    .rounded_lg()
+                    .text_sm()
+                    .cursor_pointer()
+                    .bg(rgb(0x141621))
+                    .hover(|s| s.bg(rgb(0x3b4058)))
                     .w_full()
                     .flex()
+                    .items_center()
                     .gap_3()
-                    .child(icon)
+                    .child(div().w(px(20.)).child(icon))
+                    .child(label)
                     .when(self.page == page, |s| s.bg(rgb(0x30374f)))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.pending_delete = None;
@@ -205,6 +214,7 @@ impl Mokawa {
             .id("page-body")
             .flex_1()
             .min_w_0()
+            .min_h_0()
             .h_full()
             .p_8()
             .flex()
@@ -213,7 +223,7 @@ impl Mokawa {
             .overflow_y_scroll();
         body = match self.page {
             Page::Login => body.items_center().justify_start()
-                .child(div().w_full().max_w(px(480.)).p_6().rounded_xl().bg(rgb(0x191c28)).flex().flex_col().gap_4()
+                .child(div().w_full().max_w(px(480.)).flex_shrink_0().p_6().rounded_xl().bg(rgb(0x191c28)).flex().flex_col().gap_4()
                     .child(div().text_color(rgb(0x949ce5)).text_3xl().child("Mokawa"))
                     .child(div().text_2xl().child("连接 PikPak 账号"))
                     .child(div().text_sm().text_color(rgb(0xaab3ce)).child("使用 PikPak 官方授权连接网盘，凭据仅保存在 Windows 凭据管理器中。"))

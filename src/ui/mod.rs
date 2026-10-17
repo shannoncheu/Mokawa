@@ -452,6 +452,10 @@ impl Mokawa {
                 })),
             );
         let mut center = div()
+            .bg(rgb(0x191c28))
+            .rounded_xl()
+            .mr_3()
+            .mb_3()
             .flex_1()
             .min_w_0()
             .h_full()
@@ -554,7 +558,7 @@ impl Mokawa {
             .relative()
             .size_full()
             .flex()
-            .bg(rgb(0x191c28))
+            .bg(rgb(0x141621))
             .text_color(rgb(0xe4e7f2))
             .font_family("Microsoft YaHei UI")
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.request(Operation::List, cx)))
