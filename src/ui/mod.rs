@@ -136,25 +136,21 @@ impl Mokawa {
                         this.status = format!("共 {count} 项 · PikPak");
                     }
                     Err(error) => {
-                        if matches!(
+                        let requires_login = matches!(
                             error,
                             Error::Unauthorized
                                 | Error::Credentials
                                 | Error::NoSession
                                 | Error::InvalidSession
-                        ) {
+                                | Error::ClientRegistrationRequired
+                                | Error::VerificationRequired
+                        );
+                        if requires_login {
                             this.authenticated = false;
                             this.page = Page::Login;
+                            this.browser.path.clear();
                         }
-                        if is_listing
-                            || matches!(
-                                error,
-                                Error::Unauthorized
-                                    | Error::Credentials
-                                    | Error::NoSession
-                                    | Error::InvalidSession
-                            )
-                        {
+                        if is_listing || requires_login {
                             this.browser.files.clear();
                         }
                         this.status = error.to_string();
