@@ -1,4 +1,6 @@
+#pragma code_page(65001)
 #include <winver.h>
+1 ICON "mokawa.ico"
 1 VERSIONINFO
 FILEVERSION 0,1,0,0
 PRODUCTVERSION 0,1,0,0
@@ -10,18 +12,18 @@ FILESUBTYPE 0
 BEGIN
     BLOCK "StringFileInfo"
     BEGIN
-        BLOCK "040904B0"
+        BLOCK "080404B0"
         BEGIN
-            VALUE "CompanyName", "Mokawa contributors\0"
+            VALUE "CompanyName", "Mokawa 开发者\0"
             VALUE "FileDescription", "Mokawa\0"
             VALUE "FileVersion", "0.1.0\0"
             VALUE "ProductName", "Mokawa\0"
             VALUE "ProductVersion", "0.1.0\0"
-            VALUE "Comments", "A calmer way to manage your files.\0"
+            VALUE "Comments", "PikPak 网盘客户端\0"
         END
     END
     BLOCK "VarFileInfo"
     BEGIN
-        VALUE "Translation", 0x0409, 1200
+        VALUE "Translation", 0x0804, 1200
     END
 END

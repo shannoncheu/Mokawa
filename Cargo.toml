@@ -3,7 +3,7 @@ name = "mokawa"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "Mokawa — A calmer way to manage your files."
+description = "Mokawa — PikPak Windows 桌面客户端"
 
 [features]
 default = []

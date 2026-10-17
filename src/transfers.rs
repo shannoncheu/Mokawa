@@ -113,9 +113,7 @@ impl TransferCenter {
             let mut active = self.0.cancellations.lock().unwrap();
             // Admission includes queued tasks. A duplicate must never replace a live token.
             if active.len() >= MAX_ACTIVE_TASKS || active.contains_key(&id) {
-                return Err(Error::Invalid(
-                    "download queue is full or task is already active",
-                ));
+                return Err(Error::Invalid("下载队列已满或任务已经存在"));
             }
             let mut state = self.0.state.lock().unwrap();
             if state.records.iter().any(|r| r.id == id) {
