@@ -2,7 +2,7 @@
 
 调查日期：2026-10-16。**没有提供真实账号或 Mokawa 获授权的客户端注册，因此全部真实 API 均未实测。** Mock 通过只验证 Mokawa 请求、模型和错误路径，不证明线上服务可用。
 
-本轮离线 API 交叉研究源：Bengerthelorf/pikpaktui `81d7621`（Apache-2.0，`src/pikpak/offline.rs`）、OpenListTeam/OpenList `3b28270`（AGPL-3.0，`drivers/pikpak/driver.go` 与 `types.go`）、rclone/rclone `4c52ae0`（MIT，`backend/pikpak/pikpak.go`）、lnzx/pikpak `3911b13`（MIT，`internal/pikpak/task.go`）。仅核对公开端点与字段，不复制其代码、密钥或身份材料；OpenList 的 AGPL 代码没有复制或链接进 Mokawa。
+本轮源码复查：Bengerthelorf/pikpaktui `81d7621c66a6f747b60618a4bf8b336476071e66`（Apache-2.0，`src/pikpak/mod.rs`）、OpenListTeam/OpenList `3b28270a4066ea52943a69ecddd850d83f7e8bdc`（AGPL-3.0，`drivers/pikpak/util.go`、`driver.go`）、rclone/rclone `4c52ae05756420fd4b7d9028fcdddd47af4e6e12`（MIT，`backend/pikpak/pikpak.go`）、lnzx/pikpak `3911b13`（MIT，`internal/pikpak/task.go`）。官方 PikPak CLI 文档明确说明密码登录已不再支持。只核对公开认证/API结构，不复制代码、密钥、验证码签名或平台身份材料；OpenList 的 AGPL 代码没有复制或链接进 Mokawa。
 
 参考源：
 
@@ -15,7 +15,7 @@
 |---|---|---|---|
 | PAT 本地连接 | 已从官方文档确认 PAT 可供官方 CLI 使用；REST 直接认证尚未实测 | FAQ 建议第三方应用通常走自身授权；没有公开 PAT 的 header/audience 规范 | 新增本机 Bearer 只读探测，真实验证成功后存 Windows Credential Manager；真实兼容性待测，见 [PAT 调查](PAT_AUTH.md) |
 | 官方第三方授权/客户端注册 | 尚未确认 | 官方 OIDC/MCP 发现端点已实际 GET 200；原生注册政策与 REST Token 适用性未确认 | 集成阻塞项，见下文官方资料更新 |
-| 旧密码登录 | 已从代码确认但尚未实测 | A/B 有旧实现；最新官方 CLI 文档注明密码登录不再支持 | 仅保留模型/Mock，用户入口已关闭 |
+| 账号密码登录 | 官方当前流程不支持；旧协议只从第三方源码确认 | 官方 CLI 明确注明密码登录已不再支持。旧 `/v1/auth/signin` 要求客户端身份、设备字段及验证码；公开旧实现依赖各自的平台身份/密钥，不适用于 Mokawa | 不收集账号密码，不复制客户端密钥；账号页说明原因，PAT 保留。优先等待官方 Connected Apps/OAuth 注册契约 |
 | Token 刷新 | 已从代码确认但尚未实测 | A `/v1/auth/token`，refresh_token grant | Mock 覆盖刷新与轮换 |
 | 验证码 | 已从代码确认但尚未实测 | `/v1/shield/captcha/init`；可能返回验证 URL | 返回挑战即中止；不复制签名逻辑 |
 | 退出/撤销/重新认证 | 尚未确认 | 本地会话清理不等于服务端撤销 | 本地凭据移除，401 提示重登 |
@@ -39,7 +39,7 @@
 | 分享创建/访问/管理/提取码 | 尚未确认 | 参考中未确认完整可依赖生命周期 | 未实现 |
 | 回收站列表/永久删除/清空 | 已从代码确认但尚未实测 | filters.trashed、files:batchDelete、PATCH files/trash:empty | 未接入；没有开放永久删除 |
 | 恢复 | 尚未确认 | 恢复契约需进一步验证 | 未实现 |
-| 图片/视频/音频/文本预览 | 尚未确认 | 文件详情 `usage=FETCH` 提供 `web_content_link`；公开资料未确认 Range、播放权限、CDN CORS/编解码。无 `PLAY` 端点证据 | 图片/音视频走 WebView2 原生元素、Range 由 WebView2 请求；纯文本 Rust 读取上限 512 KiB。无真实媒体账号验证；字幕未实现 |
+| 图片/视频/音频/文本预览 | 源码已区分媒体 CACHE 与文件 FETCH；线上播放限制未实测 | PikPak 客户端源码使用 `usage=CACHE` 取得媒体 rendition，`FETCH` 用于下载原始内容；WebView2 自行请求签名媒体 URL。真实 CDN Range、有效期及编码仍需账号验收 | 视频预览单独请求 CACHE，优先可见转码；下载维持 FETCH 原文件。音视频使用 WebView2 原生元素；纯文本 Rust 读取上限 512 KiB。真实账号仍未验证 |
 | 限流/错误码 | 尚未确认 | 401/403/429 和 JSON error_code 需线上进一步确认 | 标准 HTTP 分支 Mock；无自动无限重试 |
 
 ## 请求与响应

@@ -149,4 +149,18 @@ impl Api {
         )
         .await
     }
+
+    /// `CACHE` exposes playback media renditions. Downloads continue to use the
+    /// separate `FETCH` details above.
+    pub async fn playback_details(&self, s: &Session, id: &str) -> Result<FileDetails> {
+        validate_id(id)?;
+        self.drive_request(
+            s,
+            Method::GET,
+            &format!("/drive/v1/files/{id}"),
+            &[("usage", "CACHE".into())],
+            None,
+        )
+        .await
+    }
 }

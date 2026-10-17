@@ -127,6 +127,29 @@ impl FileDetails {
                 "PikPak 未提供此文件的访问链接，请刷新或下载",
             ))
     }
+
+    /// Playback prefers a server-provided transcoded rendition over the
+    /// original file URL used for downloads.
+    pub fn preferred_playback_link(&self) -> crate::error::Result<&str> {
+        if let Some(medias) = self.medias.as_ref().filter(|medias| !medias.is_empty())
+            && let Some(url) = medias
+                .iter()
+                .filter(|media| media.is_origin == Some(false))
+                .filter(|media| {
+                    media.is_visible != Some(false) && media.need_more_quota != Some(true)
+                })
+                .find_map(|media| {
+                    media
+                        .link
+                        .as_ref()
+                        .and_then(|link| link.url.as_deref())
+                        .filter(|url| !url.is_empty())
+                })
+        {
+            return Ok(url);
+        }
+        self.preferred_content_link()
+    }
 }
 
 fn nullable_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
@@ -275,4 +298,7 @@ pub struct TransferRecord {
     pub completed: u64,
     pub total: Option<u64>,
     pub phase: TransferPhase,
+    /// Actual on-disk path, set only after a completed download.
+    #[serde(default)]
+    pub local_path: Option<String>,
 }
