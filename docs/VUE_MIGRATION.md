@@ -46,3 +46,25 @@ Noto Sans SC 从 Fontsource 本地随包提供，OFL-1.1；无在线字体请求
 中间问题均保留记录：TypeScript 7 与当前 vue-tsc 不兼容，固定到实际通过的 5.9.3；Windows 编译发现异步命令持借用 State 时必须返回 Result，已修正；关闭窗口最初缺少受限 `allow-destroy` 权限，实测发现后补齐；生成的许可证资源须在 Rust 原生测试前生成；物理拖动测试需等待 IPC 进入原生拖动循环，不能按下后立即瞬移鼠标。失败的中间 CI 不计成功。
 
 Windows 最终结果与剩余人工验收在下方记录。完整客户端仍受真实授权阻塞；没有宣称完成所有 P0/P1/P2 或正式发布。
+
+### 首轮完整 Windows 成功记录
+
+[Run 39012353245](https://github.com/shannoncheu/Mokawa/actions/runs/39012353245)，代码 `270d7c82e0df200059f43458dbd8773fcb8af915`：28 项核心/Windows 凭据测试、2 项本地存储桥接测试、10 项前端测试、格式检查和严格 clippy 通过；生产前端、Rust release、NSIS 构建、安装/卸载通过。真实 WebView2 验证登录阻塞、生产 Worker、主题、头像导入与一致性、背景导入、滑块、重启恢复、移除图片、窗口最大化/还原通过；物理鼠标验证拖动、双击、最小化、还原、关闭通过。安装包 7.71 MiB，未签名。三轮进程树资源记录见 [性能文档](PERFORMANCE.md)，截图见 `docs/screenshots/vue-*.png`。
+
+修改文件覆盖 `web/`、`src-tauri/`、核心图片与资源上限模块、`scripts/windows-tauri-*.ps1`、`scripts/tauri-desktop-test.mjs`、Windows 工作流和中文文档。Windows 实际执行命令包括 `npm test`、`npm run build`、`npm run licenses`、两个 Cargo 清单的 fmt、根 `cargo test --locked --all-targets`、Tauri 清单 test/clippy、`npm run desktop:build -- --ci`、`scripts/windows-tauri-smoke.ps1`（含原生 UI、窗口和资源采样及卸载）。
+
+后续增加分页 Token 字节上限和验收子进程/步骤超时、阶段诊断，需以最新 run 单独验证，不能用此前成功替代。较早的 `39011354923` 在物理拖动检查失败，`39011903103` 在恢复后关闭点击失败，均未计成功；`39012038398` 耗时异常后主动取消。新测试在证明拖动后将近全屏窗口移回工作区，恢复后重新读尺寸并激活窗口，保留所有断言。下一步：取得 Mokawa 官方注册契约，再在合法条件下验证真实会话与文件；继续 Windows 10/11 高 DPI/系统主题与长时间运行人工验收。
+
+### 最终代码复验
+
+代码 `c912ff71d3b1f07b911567b948dad716f8ac6ed7`，最新 [Vue Windows Run 39012881124](https://github.com/shannoncheu/Mokawa/actions/runs/39012881124) **全部成功**；[保留的 GPUI Run 39012881152](https://github.com/shannoncheu/Mokawa/actions/runs/39012881152) 也全部成功。
+
+- 已实际通过：Windows 核心/凭据 **29 项**、Tauri 桥接 **2 项**、前端 **10 项**，生产编译、严格 lint、NSIS、安装/卸载、真实 WebView2 个性化/生产 Worker、物理标题栏操作、三轮进程树采样。新阶段诊断最终为 `passed`。
+- 本地已实际通过：Linux 核心 **27 项**、前端 **10 项**、Chromium UI **5 项**、生产构建、格式与核心 clippy。
+- 已执行但失败：早期 TypeScript、原生异步返回类型、关闭权限、物理窗口检查问题见上文，已修复并完整重跑；中间取消/失败不计成功。
+- 尚未验证：Windows 10/11 实机高 DPI/多显示器/边框缩放、系统主题真实切换、缺 WebView2 的联网安装、升级路径、长时间与真实负载、断网/休眠唤醒。
+- 外部阻塞：Mokawa 官方 OAuth 注册/回调/Token 权限未确认，没有合法真实账号会话，因此真实登录、刷新、文件操作和下载都未实测。上传、移动/复制、收藏、离线、分享、完整回收站、媒体仍未接入；不宣称完整客户端完成。
+
+[最终安装包和验证产物](https://github.com/shannoncheu/Mokawa/actions/runs/39012881124/artifacts/12093747480)，7.71 MiB，未签名的开发预览；主程序已核对为 Windows GUI x86-64 PE。安装包 SHA-256：`95f2edf2a60e58ac3a960dc4fcffbf7ac6e0880930313d76b514250b8bebd17f`。GitHub Release 中早期 GPUI 预览没有自动替换为此次产物。
+
+最终原生 JSON 在 `docs/validation/*c912ff7.json`，资源 CSV/JSON 在 `docs/performance/*c912ff7.*`，实际截图在 `docs/screenshots/`。完整阶段的修改文件、命令、测试和剩余问题已在本文件与性能文档记录。下一阶段首先解决官方注册契约，随后才可执行真实账号验收与高级 API 功能；开发预览不等于正式发布。

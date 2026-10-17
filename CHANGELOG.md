@@ -1,4 +1,4 @@
-# Changelog
+# 变更记录
 
 ## Vue / Tauri 迁移 — 开发中
 

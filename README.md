@@ -38,7 +38,7 @@ npm run desktop:build -- --ci
 
 构建钩子自动生成依赖许可证清单。若单独执行 Tauri Rust 测试，先运行 `npm run licenses`。安装器在 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`，只安装当前用户，未代码签名。缺少 WebView2 时安装器需联网下载微软引导程序。卸载入口位于 Windows 应用设置与安装目录。
 
-[Vue Windows CI 与构建产物](https://github.com/shannoncheu/Mokawa/actions/workflows/tauri-windows.yml) 包含编译、测试、NSIS、静默安装/卸载、真实 WebView2 个性化恢复、窗口操作与短时进程树采样。实际结果和限制见 [迁移记录](docs/VUE_MIGRATION.md)。GitHub Release 中较早的 GPUI 预览包不能视为本次 Vue 安装包。
+[已通过的 Vue Windows CI 与安装包](https://github.com/shannoncheu/Mokawa/actions/runs/39012881124) 包含编译、测试、NSIS、静默安装/卸载、真实 WebView2 个性化恢复、窗口操作与短时进程树采样。实际通过 Windows 29 项核心测试、2 项桥接测试、10 项前端测试及原生验收；实际结果和限制见 [迁移记录](docs/VUE_MIGRATION.md)。GitHub Release 中较早的 GPUI 预览包不能视为本次 Vue 安装包。
 
 安装前先退出旧 GPUI 版本，避免两个版本同时修改任务记录。卸载默认保留会话、个性化设置和任务记录；应用中的清除本地会话/退出登录和外观重置可移除相应数据。本地目录为 `%LOCALAPPDATA%/Mokawa`；不要公开其中数据、凭据或未经脱敏的日志。
 

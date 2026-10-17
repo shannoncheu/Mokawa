@@ -1,0 +1,14 @@
+{
+  "nativeWebView2": true,
+  "login": true,
+  "productionWorker": true,
+  "authorizationBlocked": true,
+  "themeClick": true,
+  "nativeAvatarImport": true,
+  "avatarConsistent": true,
+  "nativeBackgroundImport": true,
+  "slidersSave": true,
+  "restartPersistence": true,
+  "nativeMaximizeRestore": true,
+  "removeImages": true
+}

@@ -1,0 +1,21 @@
+{
+  "restore": true,
+  "drag": true,
+  "status": "passed",
+  "afterDrag": {
+    "Left": 32,
+    "Top": 30,
+    "Right": 1040,
+    "Bottom": 734
+  },
+  "beforeDrag": {
+    "Left": 8,
+    "Top": 12,
+    "Right": 1016,
+    "Bottom": 716
+  },
+  "minimize": true,
+  "doubleClick": true,
+  "maximize": true,
+  "close": true
+}

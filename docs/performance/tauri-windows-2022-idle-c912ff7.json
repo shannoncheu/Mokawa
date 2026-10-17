@@ -1,0 +1,35 @@
+[
+  {
+    "Cycle": "1",
+    "MaxWorkingSetBytes": 297844736.0,
+    "FirstPrivateBytes": 102543360.0,
+    "LastPrivateBytes": 101486592.0,
+    "FirstHandles": 2689.0,
+    "LastHandles": 2697.0,
+    "MaxThreads": 138.0,
+    "MaxProcesses": 7.0,
+    "MeanCpuOneCorePercent": 0.0
+  },
+  {
+    "Cycle": "2",
+    "MaxWorkingSetBytes": 296992768.0,
+    "FirstPrivateBytes": 106340352.0,
+    "LastPrivateBytes": 105320448.0,
+    "FirstHandles": 2684.0,
+    "LastHandles": 2684.0,
+    "MaxThreads": 137.0,
+    "MaxProcesses": 7.0,
+    "MeanCpuOneCorePercent": 0.0
+  },
+  {
+    "Cycle": "3",
+    "MaxWorkingSetBytes": 297136128.0,
+    "FirstPrivateBytes": 103190528.0,
+    "LastPrivateBytes": 101990400.0,
+    "FirstHandles": 2687.0,
+    "LastHandles": 2689.0,
+    "MaxThreads": 136.0,
+    "MaxProcesses": 7.0,
+    "MeanCpuOneCorePercent": 0.0
+  }
+]
