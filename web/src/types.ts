@@ -9,3 +9,5 @@ export interface Transfers {records:Transfer[];errors:Record<string,string>;spee
 export interface AppError {code:string;message:string}
 export const isFolder = (file:CloudFile) => file.kind === 'drive#folder'
 export function formatBytes(size:number) { if(!size) return '0 字节'; const units=['字节','KB','MB','GB','TB']; const power=Math.min(Math.floor(Math.log(size)/Math.log(1024)),4); return `${(size/1024**power).toLocaleString('zh-CN',{maximumFractionDigits:1})} ${units[power]}` }
+
+export function formatDate(value:string) {if(!value)return '—';const date=new Date(value);return Number.isNaN(date.getTime())?value:date.toLocaleString('zh-CN')}

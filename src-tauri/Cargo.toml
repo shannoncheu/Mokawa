@@ -13,8 +13,12 @@ tokio-util = "0.7"
 tauri = { version = "=2.12.4", default-features = false, features = ["wry", "compression", "common-controls-v6", "protocol-asset"] }
 rfd = "0.17"
 webbrowser = "1"
+tauri-plugin-single-instance = "=2.5.4"
 [target.'cfg(windows)'.build-dependencies]
 tauri-build = { version = "=2.7.3", features = [] }
 [[bin]]
 name = "mokawa"
 path = "src/main.rs"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Folder, File, Image, Film, Music, Check } from '@lucide/vue'
-import { isFolder, formatBytes, type CloudFile } from '../types'
+import { isFolder, formatBytes, formatDate, type CloudFile } from '../types'
 const props=defineProps<{files:CloudFile[];grid:boolean;selected:Set<string>}>()
 const emit=defineEmits<{select:[file:CloudFile,multi:boolean];open:[file:CloudFile];menu:[file:CloudFile,event:MouseEvent]}>()
 const viewport=ref<HTMLElement>(); const scroll=ref(0);const height=ref(500);const width=ref(700)
@@ -24,7 +24,7 @@ const icon=(file:CloudFile)=>isFolder(file)?Folder:file.mime_type.startsWith('im
           <component :is="icon(file)" class="file-icon" :size="grid?34:23" :stroke-width="1.6"/>
           <span class="file-name" :title="file.name">{{file.name}}</span>
           <span class="file-size">{{isFolder(file)?'文件夹':formatBytes(file.size)}}</span>
-          <span v-if="!grid" class="file-date">{{file.modified_time ? new Date(file.modified_time).toLocaleString('zh-CN') : '—'}}</span>
+          <span v-if="!grid" class="file-date">{{formatDate(file.modified_time)}}</span>
         </div>
       </div>
     </div>

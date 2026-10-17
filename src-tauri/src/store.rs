@@ -112,3 +112,51 @@ impl Store {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn preferences_round_trip_and_corruption_falls_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store {
+            root: dir.path().into(),
+            writer: tokio::sync::Mutex::new(()),
+        };
+        let settings = Personalization {
+            image_opacity: 31,
+            panel_opacity: 80,
+            ..Default::default()
+        };
+        store.save(settings.clone()).await.unwrap();
+        assert_eq!(store.load().await.settings, settings);
+        tokio::fs::write(dir.path().join("settings.json"), b"broken")
+            .await
+            .unwrap();
+        let loaded = store.load().await;
+        assert_eq!(loaded.settings, Personalization::default());
+        assert_eq!(loaded.warnings.len(), 1);
+    }
+    #[tokio::test]
+    async fn imported_image_is_owned_and_original_is_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("original.png");
+        // The committed local fixture is not cloud data.
+        std::fs::copy(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/avatar.png"),
+            &source,
+        )
+        .unwrap();
+        let before = std::fs::read(&source).unwrap();
+        let root = dir.path().join("managed");
+        let store = Store {
+            root: root.clone(),
+            writer: tokio::sync::Mutex::new(()),
+        };
+        store.import(source.clone(), true).await.unwrap();
+        assert!(store.load().await.avatar.is_some());
+        store.remove(true).await.unwrap();
+        assert!(store.load().await.avatar.is_none());
+        assert_eq!(std::fs::read(source).unwrap(), before);
+    }
+}

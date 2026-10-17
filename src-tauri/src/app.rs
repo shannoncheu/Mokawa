@@ -47,6 +47,7 @@ struct Backend {
     api: Api,
     center: TransferCenter,
     store: store::Store,
+    restored: tokio::sync::OnceCell<Option<String>>,
     page: Mutex<Option<(u64, CancellationToken)>>,
     downloads: Mutex<CancellationToken>,
     quit: CancellationToken,
@@ -59,6 +60,24 @@ struct Backend {
     exiting: AtomicBool,
 }
 impl Backend {
+    async fn snapshot(&self) -> mokawa::transfers::TransferSnapshot {
+        let error = self
+            .restored
+            .get_or_init(|| async {
+                self.center
+                    .restore()
+                    .await
+                    .err()
+                    .map(|error| error.to_string())
+            })
+            .await;
+        let mut snapshot = self.center.snapshot();
+        if snapshot.persistence_error.is_none() {
+            snapshot.persistence_error = error.clone();
+        }
+        snapshot
+    }
+
     async fn session(&self) -> mokawa::error::Result<Session> {
         let _gate = self.session_gate.lock().await;
         let epoch = credentials::generation();
@@ -322,8 +341,8 @@ async fn start_download(state: State<'_, Shared>, id: String) -> Reply<Option<St
     Ok(Some(task_id))
 }
 #[tauri::command]
-fn transfer_snapshot(state: State<'_, Shared>) -> mokawa::transfers::TransferSnapshot {
-    state.center.snapshot()
+async fn transfer_snapshot(state: State<'_, Shared>) -> mokawa::transfers::TransferSnapshot {
+    state.snapshot().await
 }
 #[tauri::command]
 fn cancel_transfer(state: State<'_, Shared>, id: String) {
@@ -342,6 +361,7 @@ pub fn run() {
         api: Api::new().expect("HTTP 客户端初始化失败"),
         center: TransferCenter::new(mokawa::settings::data_dir().join("downloads.json")),
         store: store::Store::new(),
+        restored: tokio::sync::OnceCell::new(),
         page: Mutex::new(None),
         downloads: Mutex::new(CancellationToken::new()),
         quit: CancellationToken::new(),
@@ -353,11 +373,25 @@ pub fn run() {
         next: AtomicU64::new(0),
         exiting: AtomicBool::new(false),
     });
-    let app=tauri::Builder::default().manage(backend.clone())
+    let app=tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            if let Some(window)=app.get_webview_window("main") { let _=window.unminimize();let _=window.show();let _=window.set_focus(); }
+        }))
+        .manage(backend.clone())
         .invoke_handler(tauri::generate_handler![bootstrap,begin_authorization,open_auth_help,save_appearance,choose_image,remove_image,cancel_page,list_files,create_folder,rename_file,trash_files,sign_out,start_download,transfer_snapshot,cancel_transfer])
-        .setup(|app|{let state=app.state::<Shared>().inner().clone();let handle=app.handle().clone();tauri::async_runtime::spawn(async move{
-            let _=state.center.restore().await;let _=handle.emit("transfers-changed",state.center.snapshot());
-            let mut changes=state.center.subscribe();loop{tokio::select!{_ = state.quit.cancelled()=>break,result=changes.changed()=>if result.is_err(){break;}}tokio::time::sleep(std::time::Duration::from_millis(100)).await;let _=handle.emit("transfers-changed",state.center.snapshot());}
+        .setup(|app|{
+            if let Some(window)=app.get_webview_window("main") && let Some(monitor)=window.current_monitor()? {
+                let area=monitor.work_area();let scale=monitor.scale_factor();
+                let width=(f64::from(area.size.width)/scale-32.).clamp(320.,1180.);
+                let height=(f64::from(area.size.height)/scale-32.).clamp(300.,780.);
+                window.set_min_size(Some(tauri::LogicalSize::new(width.min(840.),height.min(600.))))?;
+                window.set_size(tauri::LogicalSize::new(width,height))?;
+                let outer=window.outer_size()?;
+                window.set_position(tauri::PhysicalPosition::new(area.position.x+(area.size.width as i32-outer.width as i32)/2,area.position.y+(area.size.height as i32-outer.height as i32)/2))?;
+            }
+            let state=app.state::<Shared>().inner().clone();let handle=app.handle().clone();tauri::async_runtime::spawn(async move{
+            let _=handle.emit("transfers-changed",state.snapshot().await);
+            let mut changes=state.center.subscribe();loop{tokio::select!{_ = state.quit.cancelled()=>break,result=changes.changed()=>if result.is_err(){break;}}tokio::time::sleep(std::time::Duration::from_millis(100)).await;let _=handle.emit("transfers-changed",state.snapshot().await);}
         });Ok(())})
         .build(tauri::generate_context!()).expect("Mokawa 桌面初始化失败");
     app.run(move |handle, event| {

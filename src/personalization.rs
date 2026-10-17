@@ -1,6 +1,6 @@
 //! Local-only, bounded image import. Original paths and metadata are never persisted.
 use crate::error::{Error, Result};
-use image::{ImageFormat, ImageReader};
+use image::{ImageDecoder, ImageFormat, ImageReader};
 use serde::{Deserialize, Serialize};
 use std::{
     io::{Cursor, Read},
@@ -101,9 +101,15 @@ pub fn sanitize_image(path: &Path, avatar: bool) -> Result<Vec<u8>> {
     if u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS {
         return Err(Error::Invalid("图片不能超过 1600 万像素"));
     }
-    let image = reader
-        .decode()
+    let mut decoder = reader
+        .into_decoder()
         .map_err(|_| Error::Invalid("图片损坏或解码内存超限"))?;
+    let orientation = decoder
+        .orientation()
+        .map_err(|_| Error::Invalid("图片方向信息损坏"))?;
+    let mut image = image::DynamicImage::from_decoder(decoder)
+        .map_err(|_| Error::Invalid("图片损坏或解码内存超限"))?;
+    image.apply_orientation(orientation);
     let image = if avatar {
         image.resize_to_fill(256, 256, image::imageops::FilterType::Triangle)
     } else {
@@ -119,7 +125,11 @@ pub fn sanitize_image(path: &Path, avatar: bool) -> Result<Vec<u8>> {
             .encode_image(&image.to_rgb8())
             .map_err(|_| Error::Io)?;
     }
-    Ok(output.into_inner())
+    let output = output.into_inner();
+    if output.len() as u64 > MAX_IMAGE_BYTES {
+        return Err(Error::Invalid("处理后的图片超出容量限制"));
+    }
+    Ok(output)
 }
 #[cfg(test)]
 mod tests {

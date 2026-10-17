@@ -37,16 +37,34 @@ function unavailable(feature:string){notify(`${feature}尚未接入，当前无�
 async function windowAction(action:'minimize'|'toggleMaximize'|'close'){if(!desktop){notify('窗口控制仅在 Windows 桌面版本可用。');return}try{if(action==='close')await appearance.flush();await getCurrentWindow()[action]()}catch(error){notify(errorMessage(error))}}
 function drag(event:MouseEvent){if(event.button===0&&event.detail===1&&desktop)void getCurrentWindow().startDragging().catch(()=>{})}
 function key(event:KeyboardEvent){if(event.key==='Escape'){if(!writing.value)dialog.value=null;menu.value=null;accountMenu.value=false}if(event.key==='F5'&&authenticated.value){event.preventDefault();void load()}}
+let taskRevision=0
 onMounted(async()=>{
   window.addEventListener('keydown',key)
-  try{const result=await call<Bootstrap>('bootstrap');if(disposed)return;await appearance.initialize(result.appearance);if(result.warning)status.value=result.warning;tasks.value=await call<Transfers>('transfer_snapshot');if(result.hasSession)void load()}catch(error){report(error)}finally{booting.value=false}
-  if(desktop&&!disposed){taskObserver=await listen<Transfers>('transfers-changed',event=>{tasks.value=event.payload});if(disposed){taskObserver();return}resizedObserver=await getCurrentWindow().onResized(async()=>{maximized.value=await getCurrentWindow().isMaximized()});closeObserver=await getCurrentWindow().onCloseRequested(async event=>{if(closing)return;event.preventDefault();closing=true;await appearance.flush();await getCurrentWindow().close()});maximized.value=await getCurrentWindow().isMaximized()}
+  try {
+    if(desktop){
+      const unlisten=await listen<Transfers>('transfers-changed',event=>{taskRevision++;tasks.value=event.payload})
+      if(disposed){unlisten();return}taskObserver=unlisten
+    }
+    const result=await call<Bootstrap>('bootstrap');if(disposed)return
+    await appearance.initialize(result.appearance);if(disposed)return
+    if(result.warning)status.value=result.warning
+    const revision=taskRevision;const initial=await call<Transfers>('transfer_snapshot');if(disposed)return
+    if(revision===taskRevision)tasks.value=initial
+    if(result.hasSession)void load()
+    if(desktop){
+      const resize=await getCurrentWindow().onResized(async()=>{const value=await getCurrentWindow().isMaximized();if(!disposed)maximized.value=value})
+      if(disposed){resize();return}resizedObserver=resize
+      const close=await getCurrentWindow().onCloseRequested(async event=>{if(closing)return;event.preventDefault();closing=true;await appearance.flush();await getCurrentWindow().close()})
+      if(disposed){close();return}closeObserver=close
+      maximized.value=await getCurrentWindow().isMaximized()
+    }
+  } catch(error){report(error)} finally {booting.value=false}
 })
 onBeforeUnmount(()=>{disposed=true;requestGeneration++;window.removeEventListener('keydown',key);if(queryTimer)clearTimeout(queryTimer);if(noticeTimer)clearTimeout(noticeTimer);taskObserver?.();resizedObserver?.();closeObserver?.();void call('cancel_page').catch(()=>{})})
 </script>
 <template>
 <div class="app" :data-theme="dark?'dark':'light'" :class="{'reduce-motion':settings.reducedMotion}" :style="style" @click="menu=null;accountMenu=false">
-  <div class="background-layer"/><div class="background-overlay"/>
+  <Transition name="background-cross"><div :key="background" class="background-layer" :style="{backgroundImage:background?`url(${background})`:'none'}"/></Transition><div class="background-overlay"/>
   <header class="titlebar"><div class="titlebar-drag" @mousedown="drag" @dblclick="windowAction('toggleMaximize')"><i class="brand-mark">M</i><b>Mokawa</b></div><span v-if="!desktop" class="preview-badge">浏览器预览 · 不连接网盘</span><div class="window-controls"><button aria-label="最小化" @click="windowAction('minimize')"><Minus :size="15"/></button><button :aria-label="maximized?'还原窗口':'最大化'" @click="windowAction('toggleMaximize')"><Copy v-if="maximized" :size="13"/><Square v-else :size="13"/></button><button class="close" aria-label="关闭窗口" @click="windowAction('close')"><X :size="17"/></button></div></header>
   <div v-if="booting" class="boot"><LoaderCircle class="spin"/><span>正在打开 Mokawa…</span></div>
   <main v-else class="workspace">

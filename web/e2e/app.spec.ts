@@ -24,3 +24,15 @@ test('窄窗口设置可滚动，界面不横向溢出',async({page})=>{
   await page.getByRole('button',{name:'恢复默认外观'}).scrollIntoViewIfNeeded();await expect(page.getByRole('button',{name:'恢复默认外观'})).toBeVisible()
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
 })
+test('最低面板不透明度下，两种主题文字在极端背景仍满足对比度',async({page})=>{
+  await page.goto('/');await page.getByRole('button',{name:'外观设置'}).click()
+  for(const theme of ['浅色','深色']){
+    await page.getByRole('button',{name:theme,exact:true}).click()
+    const contrasts=await page.locator('.app').evaluate(element=>{
+      const style=getComputedStyle(element);const surface=style.getPropertyValue('--surface-rgb').split(',').map(Number)
+      const luminance=(rgb:number[])=>rgb.map(value=>{const n=value/255;return n<=.04045?n/12.92:((n+.055)/1.055)**2.4}).reduce((sum,n,i)=>sum+n*[.2126,.7152,.0722][i]!,0)
+      return ['--text','--muted','--accent'].flatMap(token=>{const hex=style.getPropertyValue(token).trim().slice(1);const rgb=[0,2,4].map(index=>parseInt(hex.slice(index,index+2),16));return [0,255].map(background=>{const panel=surface.map(channel=>channel*.8+background*.2);const a=luminance(rgb),b=luminance(panel);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05)})})
+    })
+    for(const contrast of contrasts)expect(contrast).toBeGreaterThanOrEqual(4.5)
+  }
+})
