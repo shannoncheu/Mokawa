@@ -1,0 +1,79 @@
+name: Publish verified Mokawa preview
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: publish-mokawa-preview-1
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v0.1.0-preview.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: f9e0bed83ffaa70861d545b1cfbcd249b4ae1493
+      - name: Verify original Windows build
+        shell: pwsh
+        run: |
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/38981753842" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read build evidence' }
+          if ($run.conclusion -ne 'success' -or $run.head_sha -ne 'ce9a945216ac227bfaf632f12ebe2acb5773d9ab' -or $run.path -ne '.github/workflows/windows.yml') { throw 'Unexpected build provenance' }
+      - uses: actions/download-artifact@v4
+        with:
+          name: Mokawa-windows-x64-unsigned
+          run-id: 38981753842
+          github-token: ${{ github.token }}
+          path: validated
+      - name: Package unchanged Windows binaries
+        shell: python
+        run: |
+          from pathlib import Path
+          import hashlib, shutil, zipfile
+          root = Path.cwd()
+          source = root / 'validated'
+          dist = root / 'dist'
+          dist.mkdir(exist_ok=True)
+          setup = source / 'dist/Mokawa-0.1.0-x64-setup.exe'
+          expected = 'ece26e34e30182325c06e9071683aa4af012b7326ec2062c40111592cfd0b189'
+          assert hashlib.sha256(setup.read_bytes()).hexdigest() == expected, 'Installer checksum mismatch'
+          shutil.copy2(setup, dist / setup.name)
+          shutil.copy2(source / 'dist/dependency-licenses.json', dist / 'dependency-licenses.json')
+          portable = dist / 'Mokawa-0.1.0-x64-portable.zip'
+          with zipfile.ZipFile(portable, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+              for name in ['mokawa.exe', 'mokawa-auth.exe']:
+                  archive.write(source / 'target/release' / name, 'Mokawa/' + name)
+              archive.write(dist / 'dependency-licenses.json', 'Mokawa/dependency-licenses.json')
+              for name in ['README.md', 'LICENSE', 'THIRD_PARTY.md', 'SECURITY.md', 'CHANGELOG.md']:
+                  archive.write(root / name, 'Mokawa/' + name)
+              for path in sorted((root / 'docs').rglob('*')):
+                  if path.is_file():
+                      archive.write(path, 'Mokawa/' + path.relative_to(root).as_posix())
+          with zipfile.ZipFile(portable) as archive:
+              assert archive.testzip() is None
+              assert archive.read('Mokawa/mokawa.exe') == (source / 'target/release/mokawa.exe').read_bytes()
+          assets = [dist / setup.name, portable, dist / 'dependency-licenses.json']
+          (dist / 'SHA256SUMS.txt').write_text(''.join(hashlib.sha256(path.read_bytes()).hexdigest() + '  ' + path.name + '\n' for path in assets), encoding='utf-8')
+      - name: Upload and verify draft assets
+        shell: pwsh
+        run: |
+          $release = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json isDraft,targetCommitish,assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read release draft' }
+          if (!$release.isDraft -or $release.targetCommitish -ne 'f9e0bed83ffaa70861d545b1cfbcd249b4ae1493' -or $release.assets.Count -ne 0) { throw 'Draft changed; review before uploading' }
+          gh release upload $env:RELEASE_TAG dist/Mokawa-0.1.0-x64-setup.exe dist/Mokawa-0.1.0-x64-portable.zip dist/SHA256SUMS.txt dist/dependency-licenses.json --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw 'Asset upload failed; draft remains unpublished' }
+          $uploaded = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $uploaded.assets.Count -ne 4) { throw 'Incomplete release assets' }
+          foreach ($asset in $uploaded.assets) {
+              if ($asset.size -ne (Get-Item "dist/$($asset.name)").Length) { throw 'Asset size mismatch' }
+          }
+      - name: Publish development prerelease
+        shell: pwsh
+        run: |
+          gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --draft=false --prerelease
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
