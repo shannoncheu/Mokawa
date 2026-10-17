@@ -132,7 +132,10 @@ impl Mokawa {
                     Err(error) => {
                         if matches!(
                             error,
-                            Error::Unauthorized | Error::Credentials | Error::NoSession
+                            Error::Unauthorized
+                                | Error::Credentials
+                                | Error::NoSession
+                                | Error::InvalidSession
                         ) {
                             this.authenticated = false;
                             this.page = Page::Login;
@@ -140,7 +143,10 @@ impl Mokawa {
                         if is_listing
                             || matches!(
                                 error,
-                                Error::Unauthorized | Error::Credentials | Error::NoSession
+                                Error::Unauthorized
+                                    | Error::Credentials
+                                    | Error::NoSession
+                                    | Error::InvalidSession
                             )
                         {
                             this.browser.files.clear();
@@ -170,7 +176,7 @@ impl Mokawa {
 impl Render for Mokawa {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         theme::apply(self.theme_mode, window.appearance());
-        let titlebar = self.titlebar();
+        let titlebar = self.titlebar(window);
         let body = self.render_body(window, cx);
         div()
             .size_full()

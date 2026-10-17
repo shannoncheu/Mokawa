@@ -19,7 +19,7 @@ pub(super) enum Page {
     Settings,
 }
 impl Mokawa {
-    pub(super) fn titlebar(&self) -> gpui::Div {
+    pub(super) fn titlebar(&self, window: &Window) -> gpui::Div {
         use gpui::WindowControlArea;
         let control = |id: &'static str, glyph: &'static str, area| {
             div()
@@ -63,18 +63,15 @@ impl Mokawa {
                     )
                     .child(div().text_sm().child("Mokawa")),
             )
-            .child(
-                control("minimize", "−", WindowControlArea::Min)
-                    .on_click(|_, window, _| window.minimize_window()),
-            )
-            .child(
-                control("maximize", "□", WindowControlArea::Max)
-                    .on_click(|_, window, _| window.zoom_window()),
-            )
+            .child(control("minimize", "−", WindowControlArea::Min))
+            .child(control(
+                "maximize",
+                if window.is_maximized() { "❐" } else { "□" },
+                WindowControlArea::Max,
+            ))
             .child(
                 control("close", "×", WindowControlArea::Close)
-                    .hover(|s| s.bg(gpui::rgb(0xc42b42)).text_color(gpui::white()))
-                    .on_click(|_, _, cx| cx.quit()),
+                    .hover(|s| s.bg(gpui::rgb(0xc42b42)).text_color(gpui::white())),
             )
     }
     pub(super) fn navigation(&self, cx: &mut Context<Self>) -> gpui::Div {
@@ -219,6 +216,10 @@ impl Mokawa {
                     })))
                     .child(div().p_4().rounded_lg().bg(rgb(0x202331)).text_sm().child("授权尚未开放：Mokawa 的官方客户端注册及回调规则仍待确认。当前无法新增登录，不提供未经确认的密码登录。"))
                     .child(Self::button("重试已保存的会话").on_click(cx.listener(|this, _, _, cx| this.request(Operation::List, cx))))
+                    .child(Self::button("取消会话验证").on_click(cx.listener(|this, _, _, cx| {
+                        if this.busy { if let Some(task) = this.task.take() { task.abort(); } this.browser.begin_navigation(); this.busy = false; this.status = "已取消会话验证。".into(); cx.notify(); }
+                    })))
+                    .child(Self::button("外观设置").on_click(cx.listener(|this, _, _, cx| { this.page = Page::Settings; cx.notify(); })))
                     .child(Self::button("查看 PikPak 官方授权说明").on_click(|_, _, cx| cx.open_url("https://mypikpak.com/en-US/help-center/connected_apps/managing_connected_apps/what_are_connected_apps")))) ,
             Page::Settings => {
                 body = body.child(div().text_2xl().child("设置")).child(div().text_lg().child("外观主题"))

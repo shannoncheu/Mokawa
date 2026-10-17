@@ -44,11 +44,15 @@ fn save_unlocked(session: &Session) -> Result<()> {
 }
 #[cfg(windows)]
 pub fn load() -> Result<Session> {
-    serde_json::from_str(&entry()?.get_password().map_err(|error| match error {
+    read_session(&entry()?)
+}
+#[cfg(windows)]
+fn read_session(entry: &keyring::Entry) -> Result<Session> {
+    serde_json::from_str(&entry.get_password().map_err(|error| match error {
         keyring::Error::NoEntry => Error::NoSession,
         _ => Error::Credentials,
     })?)
-    .map_err(|_| Error::Credentials)
+    .map_err(|_| Error::InvalidSession)
 }
 #[cfg(windows)]
 fn delete_unlocked() -> Result<()> {
@@ -68,4 +72,24 @@ pub fn load() -> Result<Session> {
 #[cfg(not(windows))]
 fn delete_unlocked() -> Result<()> {
     Err(Error::Credentials)
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    #[test]
+    fn absent_and_corrupt_credentials_are_distinct() {
+        let name = format!("ui-errors-{}-{}", std::process::id(), crate::auth::now());
+        let entry = keyring::Entry::new("app.mokawa.desktop.tests", &name).unwrap();
+        struct Cleanup(keyring::Entry);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = self.0.delete_credential();
+            }
+        }
+        let entry = Cleanup(entry);
+        assert!(matches!(read_session(&entry.0), Err(Error::NoSession)));
+        entry.0.set_password("not-a-real-session").unwrap();
+        assert!(matches!(read_session(&entry.0), Err(Error::InvalidSession)));
+    }
 }

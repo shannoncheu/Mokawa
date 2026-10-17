@@ -24,6 +24,8 @@ pub enum Error {
     Credentials,
     #[error("没有保存的账号，请先完成 PikPak 授权。")]
     NoSession,
+    #[error("保存的会话数据已损坏，请清除会话后重新授权。 ")]
+    InvalidSession,
     #[error("尚未取得 Mokawa 专用的 PikPak 客户端注册信息，暂时无法授权。")]
     ClientRegistrationRequired,
     #[error("PikPak 授权尚未接入：Mokawa 的客户端注册与回调规则仍待确认，当前无法登录。")]
