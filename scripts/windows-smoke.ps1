@@ -12,11 +12,13 @@ public static class MokawaWindow {
 }
 '@
 $results = @()
-foreach ($scenario in @('account', 'files', 'tasks', 'settings', 'files-small', 'account-dark', 'files-dark', 'settings-dark')) {
-    $page = $scenario -replace '-small|-dark', ''
+foreach ($scenario in @('account', 'files', 'tasks', 'settings', 'files-small', 'account-dark', 'files-dark', 'settings-dark', 'files-many', 'files-grid', 'files-grid-dark')) {
+    $page = $scenario -replace '-small|-dark|-many|-grid', ''
     $theme = if ($scenario.EndsWith('-dark')) { 'dark' } else { 'light' }
     $arguments = @('--smoke-test', "--smoke-page=$page", "--smoke-theme=$theme")
     if ($scenario -eq 'files-small') { $arguments += '--smoke-small' }
+    if ($scenario -match 'many|grid') { $arguments += '--smoke-fixture' }
+    if ($scenario -match 'grid') { $arguments += '--smoke-grid' }
     $process = $null
     try {
         $process = Start-Process -FilePath $Executable -ArgumentList $arguments -PassThru

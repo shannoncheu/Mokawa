@@ -463,6 +463,16 @@ impl Mokawa {
             .flex()
             .flex_col()
             .gap_4()
+            .when(smoke_files(), |center| {
+                center.child(
+                    div()
+                        .p_2()
+                        .rounded_lg()
+                        .bg(rgb(0x4a2935))
+                        .text_sm()
+                        .child("界面测试数据 · 未连接 PikPak · 仅验证渲染"),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -619,6 +629,10 @@ impl Mokawa {
             .into_any_element()
     }
 }
+fn smoke_files() -> bool {
+    std::env::args().any(|arg| arg == "--smoke-test")
+        && std::env::args().any(|arg| arg == "--smoke-fixture")
+}
 fn smoke_theme() -> Option<mokawa::settings::ThemeMode> {
     std::env::args().find_map(|arg| match arg.as_str() {
         "--smoke-theme=light" => Some(mokawa::settings::ThemeMode::Light),
@@ -732,6 +746,27 @@ pub fn run() {
                         context_menu: None,
                         task: None,
                     };
+                    if smoke_files() {
+                        // Explicit diagnostic data only: auto-exits, never a successful account state.
+                        view.browser.files = (0..10_000)
+                            .map(|index| File {
+                                id: format!("ui-test-{index}"),
+                                name: format!("测试文件 {index:05}.dat"),
+                                kind: if index % 10 == 0 {
+                                    "drive#folder"
+                                } else {
+                                    "drive#file"
+                                }
+                                .into(),
+                                size: (index + 1) * 1024,
+                                modified_time: "界面测试数据".into(),
+                                ..Default::default()
+                            })
+                            .collect();
+                        view.status =
+                            "界面测试：10,000 个合成文件，未连接 PikPak，不代表真实网盘功能。"
+                                .into();
+                    }
                     view.appearance_subscription =
                         Some(cx.observe_window_appearance(window, |this, window, cx| {
                             theme::apply(this.theme_mode, window.appearance());

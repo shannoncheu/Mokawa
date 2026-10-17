@@ -432,7 +432,9 @@ impl Mokawa {
                     }
                     match preferences {
                         Ok(p) => {
-                            this.grid = p.compact_rows;
+                            this.grid = p.compact_rows
+                                || (smoke_files()
+                                    && std::env::args().any(|arg| arg == "--smoke-grid"));
                             this.hide_details = p.hide_details;
                             this.theme_mode = smoke_theme().unwrap_or(p.theme);
                         }
