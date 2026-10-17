@@ -1,6 +1,6 @@
 use mokawa::{
     api::Api,
-    auth::{Registration, Session, now},
+    auth::{AuthMethod, Registration, Session, now},
     error::Error,
     files::ConfirmedDeletion,
     models::{File, TransferPhase, TransferRecord},
@@ -17,6 +17,7 @@ fn session() -> Session {
         captcha_token: "secret-captcha".into(),
         device_id: "device".into(),
         expires_at: now() + 3600,
+        auth_method: AuthMethod::OAuth,
     }
 }
 fn file(id: &str, name: &str) -> File {
@@ -39,6 +40,9 @@ fn model_size_and_secret_redaction() {
             .is_err()
     );
     assert!(!format!("{:?}", session()).contains("secret"));
+    let legacy = r#"{"access_token":"a","refresh_token":"r","captcha_token":"c","device_id":"d","expires_at":99}"#;
+    let restored: Session = serde_json::from_str(legacy).unwrap();
+    assert_eq!(restored.auth_method, AuthMethod::OAuth);
 }
 #[test]
 fn deletion_requires_confirmation_and_valid_ids() {
@@ -80,6 +84,101 @@ async fn paginated_files_include_auth_and_filters() {
         .await
         .unwrap();
     assert_eq!(files.len(), 2);
+}
+
+#[tokio::test]
+async fn personal_access_token_is_verified_as_bearer_before_it_can_be_used() {
+    use secrecy::ExposeSecret;
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/drive/v1/files"))
+        .and(query_param("parent_id", ""))
+        .and(query_param("limit", "1"))
+        .and(header("authorization", "Bearer user-pat"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"files":[]})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let session = Session::from_personal_access_token("user-pat".into()).unwrap();
+    assert_eq!(session.auth_method, AuthMethod::PersonalAccessToken);
+    assert!(!session.expired());
+    assert!(!format!("{session:?}").contains("user-pat"));
+    assert_eq!(session.access_token.expose_secret(), "user-pat");
+
+    Api::for_mock(&server.uri())
+        .unwrap()
+        .verify_personal_access_token(&session)
+        .await
+        .unwrap();
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    assert!(!requests[0].headers.contains_key("x-device-id"));
+    assert!(!requests[0].headers.contains_key("x-captcha-token"));
+}
+
+#[tokio::test]
+async fn invalid_or_underprivileged_personal_access_token_is_not_accepted() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/drive/v1/files"))
+        .respond_with(ResponseTemplate::new(401))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let session = Session::from_personal_access_token("revoked-or-invalid".into()).unwrap();
+    assert!(matches!(
+        Api::for_mock(&server.uri())
+            .unwrap()
+            .verify_personal_access_token(&session)
+            .await,
+        Err(Error::Unauthorized)
+    ));
+}
+
+#[tokio::test]
+async fn personal_access_token_never_uses_oauth_refresh() {
+    let server = MockServer::start().await;
+    let registration = Registration {
+        client_id: "unused-for-pat".into(),
+        client_secret: "unused-for-pat".into(),
+    };
+    let session = Session::from_personal_access_token("user-pat".into()).unwrap();
+    assert!(matches!(
+        Api::for_mock(&server.uri())
+            .unwrap()
+            .refresh(&registration, &session)
+            .await,
+        Err(Error::Unauthorized)
+    ));
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn personal_access_token_permission_failure_is_actionable() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/drive/v1/files"))
+        .respond_with(ResponseTemplate::new(403))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let session = Session::from_personal_access_token("limited-pat".into()).unwrap();
+    let err = Api::for_mock(&server.uri())
+        .unwrap()
+        .verify_personal_access_token(&session)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::AccessDenied));
+    assert!(err.to_string().contains("检查令牌权限"));
+}
+
+#[test]
+fn personal_access_token_rejects_empty_oversized_and_control_data() {
+    assert!(Session::from_personal_access_token("  ".into()).is_err());
+    assert!(Session::from_personal_access_token("bad\ntoken".into()).is_err());
+    assert!(Session::from_personal_access_token("x".repeat(2049).into()).is_err());
 }
 #[tokio::test]
 async fn expired_session_does_not_send_request() {

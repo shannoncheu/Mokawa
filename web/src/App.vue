@@ -30,6 +30,8 @@ import {
   LogOut,
   Monitor,
   HardDrive,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from '@lucide/vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -63,6 +65,7 @@ let returnFocus: HTMLElement | null = null
 const page = ref('login')
 const authenticated = ref(false)
 const busy = ref(false)
+const personalAccessToken = ref('')
 const booting = ref(true)
 const status = ref('')
 const files = shallowRef<CloudFile[]>([])
@@ -93,6 +96,9 @@ let taskObserver: UnlistenFn | undefined
 let closeObserver: UnlistenFn | undefined
 let closeFlush: Promise<void> | undefined
 const maximized = ref(false)
+const sidebarCollapsed = ref(false)
+const settingsSection = ref('appearance')
+const taskFilter = ref<'all' | 'active' | 'completed' | 'failed'>('all')
 const navigation = [
   { id: 'home', label: '首页', icon: Home },
   { id: 'files', label: '我的文件', icon: Folder },
@@ -102,6 +108,23 @@ const navigation = [
   { id: 'shares', label: '分享管理', icon: Share2 },
   { id: 'trash', label: '回收站', icon: Trash2 },
 ]
+const settingsNavigation = [
+  { id: 'appearance', label: '外观与个性化', icon: Monitor },
+  { id: 'downloads', label: '下载', icon: Download },
+  { id: 'account', label: '账号', icon: UserRound },
+  { id: 'about', label: '关于 Mokawa', icon: CircleAlert },
+]
+const filteredTasks = computed(() => {
+  const rows = [...tasks.value.records].reverse()
+  if (taskFilter.value === 'active')
+    return rows.filter((task) => ['Queued', 'Running'].includes(task.phase))
+  if (taskFilter.value === 'completed') return rows.filter((task) => task.phase === 'Completed')
+  if (taskFilter.value === 'failed')
+    return rows.filter((task) => ['Failed', 'Interrupted'].includes(task.phase))
+  return rows
+})
+const recentTasks = computed(() => [...tasks.value.records].reverse().slice(0, 3))
+const commonFolders = computed(() => files.value.filter(isFolder).slice(0, 6))
 const { visible, indexing } = useFileView(files, debouncedQuery, descending, notify)
 const currentFile = computed(() =>
   selected.value.size === 1 ? files.value.find((file) => selected.value.has(file.id)) : undefined,
@@ -210,15 +233,26 @@ function breadcrumb(index: number) {
   query.value = ''
   void load()
 }
-async function authorize() {
+async function connectPersonalAccessToken() {
   if (busy.value) return
+  const token = personalAccessToken.value.trim()
+  personalAccessToken.value = ''
+  if (!token) {
+    status.value = '请输入 PikPak 个人访问令牌。'
+    return
+  }
   busy.value = true
-  status.value = '正在检查授权方式…'
+  status.value = '正在向 PikPak 验证令牌并读取根目录…'
   try {
-    await call('begin_authorization')
+    await call('connect_personal_access_token', { token })
+    hasSavedSession.value = true
+    path.value = []
+    page.value = 'files'
+    await load()
   } catch (error) {
     report(error)
   } finally {
+    personalAccessToken.value = ''
     busy.value = false
   }
 }
@@ -407,6 +441,7 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   disposed = true
+  personalAccessToken.value = ''
   requestGeneration++
   window.removeEventListener('keydown', key)
   if (queryTimer) clearTimeout(queryTimer)
@@ -445,7 +480,11 @@ function showMoveUnavailable() {
     /></Transition>
     <div class="background-overlay" />
     <header class="titlebar">
-      <div class="titlebar-drag" data-tauri-drag-region="deep">
+      <div
+        class="titlebar-drag"
+        data-tauri-drag-region="deep"
+        @dblclick="windowAction('toggleMaximize')"
+      >
         <i class="brand-mark">M</i><b>Mokawa</b>
       </div>
       <span v-if="!desktop" class="preview-badge">浏览器预览 · 不连接网盘</span>
@@ -464,8 +503,23 @@ function showMoveUnavailable() {
     <div v-if="booting" class="boot">
       <LoaderCircle class="spin" /><span>正在打开 Mokawa…</span>
     </div>
-    <main v-else class="workspace" :inert="dialog !== null">
+    <main
+      v-else
+      class="workspace"
+      :class="{ 'sidebar-collapsed': sidebarCollapsed }"
+      :inert="dialog !== null"
+    >
       <aside v-if="page !== 'login'" class="sidebar panel">
+        <div class="sidebar-topline">
+          <span>工作空间</span
+          ><button
+            class="icon-button collapse-sidebar"
+            aria-label="收起侧边栏"
+            @click="sidebarCollapsed = true"
+          >
+            <PanelLeftClose :size="17" />
+          </button>
+        </div>
         <nav aria-label="主导航">
           <button
             v-for="item in navigation"
@@ -503,6 +557,14 @@ function showMoveUnavailable() {
           </button>
         </div>
       </aside>
+      <button
+        v-if="sidebarCollapsed && page !== 'login'"
+        class="sidebar-reopen icon-button"
+        aria-label="展开侧边栏"
+        @click="sidebarCollapsed = false"
+      >
+        <PanelLeftOpen :size="18" />
+      </button>
       <section v-if="page === 'login'" class="login-screen">
         <button class="login-settings" @click="route('settings')">
           <Settings2 :size="16" />外观设置
@@ -510,20 +572,42 @@ function showMoveUnavailable() {
         <div class="login-card panel">
           <i class="brand-mark hero">M</i>
           <h1>连接 PikPak 账号</h1>
-          <p>授权后，在 Mokawa 管理你的网盘文件。</p>
-          <button class="primary full" :disabled="busy" @click="authorize">
-            <LoaderCircle v-if="busy" class="spin" :size="17" />{{
-              busy ? '正在验证…' : '使用 PikPak 授权登录'
-            }}
-          </button>
+          <p>连接后，在 Mokawa 管理你的 PikPak 文件。</p>
           <div class="auth-note">
             <CircleAlert :size="18" /><span
-              >授权尚未开放<br /><small
-                >Mokawa
-                专用客户端注册与回调规则仍待确认。当前无法新增登录，不提供未经确认的密码登录。</small
+              >个人访问令牌<br /><small
+                >令牌只会发往 PikPak 并在验证成功后存入 Windows 凭据管理器。官方将 PAT
+                定位为个人脚本/NAS
+                使用，并建议第三方应用采用自己的授权流程；请仅在你接受此限制时使用。</small
               ></span
             >
           </div>
+          <label for="personal-access-token">PikPak 个人访问令牌</label>
+          <input
+            id="personal-access-token"
+            v-model="personalAccessToken"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            :disabled="busy"
+            placeholder="粘贴在 PikPak 创建的 PAT"
+            @keydown.enter.prevent="connectPersonalAccessToken"
+          />
+          <button
+            class="primary full"
+            :disabled="busy || !personalAccessToken.trim()"
+            @click="connectPersonalAccessToken"
+          >
+            <LoaderCircle v-if="busy" class="spin" :size="17" />{{
+              busy ? '正在验证并读取文件…' : '验证并连接'
+            }}
+          </button>
+          <small class="privacy"
+            >验证请求只读取根目录一页；令牌仅在读取成功后保存。过期或撤销时需重新连接。</small
+          >
+          <button class="text-button" disabled title="等待 PikPak 为 Mokawa 明确桌面客户端授权契约">
+            使用 PikPak 浏览器授权（尚未开放）
+          </button>
           <button :disabled="busy" @click="load">重试已保存的会话</button
           ><button v-if="busy" class="text-button" @click="cancelLogin">取消会话验证</button
           ><button v-if="hasSavedSession" :disabled="busy" @click="signOut">清除本地会话</button
@@ -537,17 +621,81 @@ function showMoveUnavailable() {
         </div>
       </section>
       <section v-else-if="page === 'settings'" class="content-panel panel settings-page">
-        <AppearancePanel
-          :settings="settings"
-          :avatar="avatar"
-          :background="background"
-          :save-status="saveStatus"
-          :importing="importing"
-          @choose="appearance.choose"
-          @remove="appearance.remove"
-          @reset="appearance.reset"
-          @retry="appearance.flush"
-        />
+        <div class="settings-shell">
+          <aside class="settings-nav">
+            <h1>设置</h1>
+            <p>管理 Mokawa 的外观与行为</p>
+            <button
+              v-for="item in settingsNavigation"
+              :key="item.id"
+              :class="{ active: settingsSection === item.id }"
+              @click="settingsSection = item.id"
+            >
+              <component :is="item.icon" :size="17" />{{ item.label }}
+            </button>
+          </aside>
+          <div class="settings-content">
+            <AppearancePanel
+              v-if="settingsSection === 'appearance'"
+              :settings="settings"
+              :avatar="avatar"
+              :background="background"
+              :save-status="saveStatus"
+              :importing="importing"
+              @choose="appearance.choose"
+              @remove="appearance.remove"
+              @reset="appearance.reset"
+              @retry="appearance.flush"
+            />
+            <section v-else-if="settingsSection === 'downloads'" class="simple-settings">
+              <p class="eyebrow">偏好设置</p>
+              <h1>下载</h1>
+              <div class="setting-section">
+                <h2>下载目录</h2>
+                <p>当前版本会在开始下载时由 Windows 选择保存位置。</p>
+              </div>
+              <div class="setting-section">
+                <h2>并发数量</h2>
+                <p>最多同时下载 2 个文件。任务队列会在应用关闭后保留状态。</p>
+              </div>
+              <div class="setting-section">
+                <h2>下载行为</h2>
+                <p>取消或失败的任务可从任务中心查看；暂停和续传能力尚未验证。</p>
+              </div>
+            </section>
+            <section v-else-if="settingsSection === 'account'" class="simple-settings">
+              <p class="eyebrow">PikPak 连接</p>
+              <h1>账号</h1>
+              <div class="account-setting-card">
+                <span class="avatar"><UserRound :size="18" /></span>
+                <div>
+                  <b>{{ authenticated ? '已连接 PikPak' : '未连接 PikPak' }}</b>
+                  <p>{{ authenticated ? '当前会话已验证' : '使用个人访问令牌连接' }}</p>
+                </div>
+                <button v-if="authenticated" class="danger-text" @click="signOut">退出登录</button
+                ><button v-else class="primary" @click="route('login')">前往连接</button>
+              </div>
+              <p class="setting-note">
+                令牌由 Rust 后端验证并保存在 Windows 凭据管理器中。PikPak 尚未为 Mokawa
+                提供已确认的浏览器授权流程。
+              </p>
+            </section>
+            <section v-else class="simple-settings">
+              <p class="eyebrow">应用信息</p>
+              <h1>关于</h1>
+              <div class="about-card">
+                <i class="brand-mark hero">M</i>
+                <h2>Mokawa</h2>
+                <p>Windows PikPak 桌面客户端</p>
+                <small>版本 {{ '0.1.0' }}</small>
+              </div>
+              <div class="setting-section">
+                <h2>项目与更新</h2>
+                <p>应用更新信息将在正式发布渠道开放后提供。</p>
+              </div>
+            </section>
+          </div>
+        </div>
       </section>
       <section v-else-if="page === 'tasks'" class="content-panel panel tasks-page">
         <div class="page-heading">
@@ -558,18 +706,26 @@ function showMoveUnavailable() {
           <span class="muted">最多同时下载 2 个文件</span>
         </div>
         <div class="tabs">
-          <button class="active">
-            下载任务 <span>{{ tasks.records.length }}</span></button
-          ><button @click="unavailable('上传')">上传任务</button
-          ><button @click="unavailable('离线下载')">离线任务</button>
+          <button :class="{ active: taskFilter === 'all' }" @click="taskFilter = 'all'">
+            全部 <span>{{ tasks.records.length }}</span></button
+          ><button :class="{ active: taskFilter === 'active' }" @click="taskFilter = 'active'">
+            进行中</button
+          ><button
+            :class="{ active: taskFilter === 'completed' }"
+            @click="taskFilter = 'completed'"
+          >
+            已完成</button
+          ><button :class="{ active: taskFilter === 'failed' }" @click="taskFilter = 'failed'">
+            失败</button
+          ><span class="tasks-kind">下载任务</span>
         </div>
-        <div v-if="!tasks.records.length" class="empty-state">
+        <div v-if="!filteredTasks.length" class="empty-state">
           <Download :size="38" />
           <h2>暂无下载任务</h2>
           <p>登录后，选择文件并点击下载。</p>
         </div>
         <div v-if="tasks.persistence_error" class="error-box">{{ tasks.persistence_error }}</div>
-        <article v-for="task in [...tasks.records].reverse()" :key="task.id" class="transfer-row">
+        <article v-for="task in filteredTasks" :key="task.id" class="transfer-row">
           <div class="file-type-icon"><Download :size="22" /></div>
           <div class="transfer-content">
             <b>{{ task.file_name }}</b>
@@ -594,10 +750,130 @@ function showMoveUnavailable() {
         </article>
         <p class="footnote">尚未验证暂停与续传能力。上传、离线下载尚未接入。</p>
       </section>
-      <section
-        v-else-if="page === 'files' || page === 'home'"
-        class="content-panel panel files-page"
-      >
+      <section v-else-if="page === 'home'" class="content-panel panel home-page">
+        <div class="home-topbar">
+          <div class="search-field">
+            <Search :size="18" /><input
+              v-model="query"
+              placeholder="搜索文件"
+              aria-label="搜索文件"
+            />
+          </div>
+          <button class="icon-button" aria-label="任务中心" @click="route('tasks')">
+            <Download :size="18" />
+          </button>
+        </div>
+        <div class="home-scroll">
+          <div class="home-welcome">
+            <div>
+              <p class="eyebrow">MOKAWA · PIKPAK</p>
+              <h1>你好，欢迎回来</h1>
+              <p>
+                {{
+                  authenticated
+                    ? '这里是你的云端文件空间。'
+                    : '连接 PikPak 后，在这里管理云端文件。'
+                }}
+              </p>
+            </div>
+            <span class="connection-pill" :class="{ connected: authenticated }"
+              ><i />{{ authenticated ? '已连接' : '未连接' }}</span
+            >
+          </div>
+          <section class="home-section">
+            <div class="section-heading">
+              <div>
+                <h2>常用入口</h2>
+                <p>快速前往你的工作区域</p>
+              </div>
+            </div>
+            <div class="quick-links">
+              <button @click="route('files')">
+                <Folder :size="19" /><span
+                  ><b>我的文件</b
+                  ><small>{{
+                    authenticated ? `${files.length} 项已加载` : '连接后查看文件'
+                  }}</small></span
+                ><ChevronRight :size="16" /></button
+              ><button @click="route('favorites')">
+                <Star :size="19" /><span><b>收藏</b><small>查看已收藏的内容</small></span
+                ><ChevronRight :size="16" /></button
+              ><button @click="route('tasks')">
+                <Download :size="19" /><span
+                  ><b>任务中心</b
+                  ><small>{{
+                    tasks.records.length ? `${tasks.records.length} 个下载任务` : '查看下载任务'
+                  }}</small></span
+                ><ChevronRight :size="16" />
+              </button>
+            </div>
+          </section>
+          <section class="home-section">
+            <div class="section-heading">
+              <div>
+                <h2>常用文件夹</h2>
+                <p>
+                  {{
+                    authenticated ? '当前已加载目录中的真实文件夹' : '连接账号后显示真实云端目录'
+                  }}
+                </p>
+              </div>
+              <button v-if="authenticated" class="text-button" @click="route('files')">
+                查看我的文件 <ChevronRight :size="14" />
+              </button>
+            </div>
+            <div v-if="authenticated && commonFolders.length" class="home-recent">
+              <button v-for="file in commonFolders" :key="file.id" @click="openFile(file)">
+                <Folder :size="18" /><span
+                  ><b>{{ file.name }}</b
+                  ><small
+                    >文件夹 ·
+                    {{
+                      file.modified_time
+                        ? new Date(file.modified_time).toLocaleDateString('zh-CN')
+                        : '—'
+                    }}</small
+                  ></span
+                ><ChevronRight :size="15" />
+              </button>
+            </div>
+            <div v-else class="home-empty">
+              <Folder :size="20" /><span>{{
+                authenticated
+                  ? '当前目录没有文件夹。最近访问记录尚未由当前 PikPak 接口提供。'
+                  : '连接 PikPak 后，真实文件夹会显示在这里。'
+              }}</span
+              ><button v-if="!authenticated" class="primary" @click="route('login')">
+                连接 PikPak
+              </button>
+            </div>
+          </section>
+          <section class="home-section">
+            <div class="section-heading">
+              <div>
+                <h2>最近下载</h2>
+                <p>任务状态来自本机下载队列</p>
+              </div>
+              <button v-if="recentTasks.length" class="text-button" @click="route('tasks')">
+                打开任务中心 <ChevronRight :size="14" />
+              </button>
+            </div>
+            <div v-if="recentTasks.length" class="home-recent">
+              <div v-for="task in recentTasks" :key="task.id">
+                <Download :size="18" /><span
+                  ><b>{{ task.file_name }}</b
+                  ><small
+                    >{{ phases[task.phase] }} · {{ formatBytes(task.completed)
+                    }}{{ task.total ? ` / ${formatBytes(task.total)}` : '' }}</small
+                  ></span
+                >
+              </div>
+            </div>
+            <div v-else class="home-empty"><Download :size="20" /><span>暂无下载记录</span></div>
+          </section>
+        </div>
+      </section>
+      <section v-else-if="page === 'files'" class="content-panel panel files-page">
         <div class="files-topbar">
           <div class="search-field">
             <Search :size="18" /><input

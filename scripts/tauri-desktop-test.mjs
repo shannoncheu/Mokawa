@@ -103,9 +103,12 @@ try {
       }),
     workerAsset,
   )
-  await app.page.getByRole('button', { name: '使用 PikPak 授权登录' }).click()
-  await expect(app.page.locator('.login-error')).toContainText('尚未接入')
-  results.authorizationBlocked = true
+  await expect(app.page.getByLabel('PikPak 个人访问令牌')).toBeVisible()
+  await expect(
+    app.page.getByRole('button', { name: '使用 PikPak 浏览器授权（尚未开放）' }),
+  ).toBeDisabled()
+  results.personalAccessTokenEntry = true
+  results.browserAuthorizationClearlyUnavailable = true
   await app.page.getByRole('button', { name: '外观设置' }).click()
   await app.page.getByRole('heading', { name: '个性化', exact: true }).waitFor()
   await app.page.getByRole('button', { name: '深色', exact: true }).click()

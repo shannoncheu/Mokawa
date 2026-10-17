@@ -13,7 +13,7 @@ const scroll = ref(0)
 const height = ref(500)
 const width = ref(700)
 const columns = computed(() => (props.grid ? Math.max(1, Math.floor(width.value / 210)) : 1))
-const rowHeight = computed(() => (props.grid ? 164 : 54))
+const rowHeight = computed(() => (props.grid ? 164 : 48))
 const start = computed(() => Math.max(0, Math.floor(scroll.value / rowHeight.value) - 3))
 const totalRows = computed(() => Math.ceil(props.files.length / columns.value))
 const rows = computed(() =>

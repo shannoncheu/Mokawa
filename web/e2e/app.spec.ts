@@ -1,9 +1,11 @@
 import { test, expect } from '@playwright/test'
-test('首次显示中文登录入口，授权阻塞不进入文件页', async ({ page }) => {
+test('首次显示中文 PAT 登录入口，不伪装尚未开放的授权方式', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '连接 PikPak 账号' })).toBeVisible()
-  await page.getByRole('button', { name: '使用 PikPak 授权登录' }).click()
-  await expect(page.locator('.login-error')).toContainText('注册与回调规则仍待确认')
+  await expect(page.getByLabel('PikPak 个人访问令牌')).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: '使用 PikPak 浏览器授权（尚未开放）' }),
+  ).toBeDisabled()
   await expect(page.getByRole('button', { name: '退出登录' })).toHaveCount(0)
   await page.screenshot({ path: 'test-results/login-light.png' })
 })
@@ -54,7 +56,7 @@ test('最低面板不透明度下，两种主题文字在极端背景仍满足�
             return n <= 0.04045 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4
           })
           .reduce((sum, n, i) => sum + n * [0.2126, 0.7152, 0.0722][i]!, 0)
-      return ['--text', '--muted', '--accent'].flatMap((token) => {
+      return ['--text', '--muted-text', '--accent-text'].flatMap((token) => {
         const hex = style.getPropertyValue(token).trim().slice(1)
         const rgb = [0, 2, 4].map((index) => parseInt(hex.slice(index, index + 2), 16))
         return [0, 255].map((background) => {

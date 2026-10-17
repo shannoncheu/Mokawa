@@ -34,6 +34,7 @@ impl From<Error> for CommandError {
             | Error::Credentials
             | Error::VerificationRequired
             | Error::ClientRegistrationRequired => "authentication",
+            Error::AccessDenied => "permission",
             Error::Cancelled => "cancelled",
             _ => "operation",
         };
@@ -165,8 +166,23 @@ async fn begin_authorization() -> Reply<()> {
     Err(Error::AuthorizationPending.into())
 }
 #[tauri::command]
+async fn connect_personal_access_token(state: State<'_, Shared>, token: String) -> Reply<()> {
+    let session = Session::from_personal_access_token(token.into())?;
+    let _gate = state.session_gate.lock().await;
+    let epoch = credentials::generation();
+    state.api.verify_personal_access_token(&session).await?;
+    let saved = session.clone();
+    tauri::async_runtime::spawn_blocking(move || credentials::save_if_current(&saved, epoch))
+        .await
+        .map_err(|_| CommandError::from(Error::Credentials))??;
+    Ok(())
+}
+#[tauri::command]
 async fn open_auth_help() -> Reply<()> {
-    tauri::async_runtime::spawn_blocking(||webbrowser::open("https://mypikpak.com/en-US/help-center/connected_apps/managing_connected_apps/what_are_connected_apps")).await.map_err(|_|CommandError::from(Error::Io))?.map_err(|_|Error::Io.into())
+    tauri::async_runtime::spawn_blocking(|| webbrowser::open("https://mypikpak.com/zh-CN/faq#55"))
+        .await
+        .map_err(|_| CommandError::from(Error::Io))?
+        .map_err(|_| Error::Io.into())
 }
 #[tauri::command]
 async fn save_appearance(state: State<'_, Shared>, settings: Personalization) -> Reply<()> {
@@ -386,7 +402,7 @@ pub fn run() {
             if let Some(window)=app.get_webview_window("main") { let _=window.unminimize();let _=window.show();let _=window.set_focus(); }
         }))
         .manage(backend.clone())
-        .invoke_handler(tauri::generate_handler![bootstrap,begin_authorization,open_auth_help,save_appearance,choose_image,remove_image,cancel_page,list_files,create_folder,rename_file,trash_files,sign_out,start_download,transfer_snapshot,cancel_transfer])
+        .invoke_handler(tauri::generate_handler![bootstrap,begin_authorization,connect_personal_access_token,open_auth_help,save_appearance,choose_image,remove_image,cancel_page,list_files,create_folder,rename_file,trash_files,sign_out,start_download,transfer_snapshot,cancel_transfer])
         .setup(|app|{
             if let Some(window)=app.get_webview_window("main") && let Some(monitor)=window.current_monitor()? {
                 let area=monitor.work_area();let scale=monitor.scale_factor();

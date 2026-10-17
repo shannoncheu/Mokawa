@@ -11,6 +11,7 @@
 
 | 能力 | 状态 | 来源/接口与限制 | Mokawa 状态 |
 |---|---|---|---|
+| PAT 本地连接 | 已从官方文档确认 PAT 可供官方 CLI 使用；REST 直接认证尚未实测 | FAQ 建议第三方应用通常走自身授权；没有公开 PAT 的 header/audience 规范 | 新增本机 Bearer 只读探测，真实验证成功后存 Windows Credential Manager；真实兼容性待测，见 [PAT 调查](PAT_AUTH.md) |
 | 官方第三方授权/客户端注册 | 尚未确认 | 官方 OIDC/MCP 发现端点已实际 GET 200；原生注册政策与 REST Token 适用性未确认 | 集成阻塞项，见下文官方资料更新 |
 | 旧密码登录 | 已从代码确认但尚未实测 | A/B 有旧实现；最新官方 CLI 文档注明密码登录不再支持 | 仅保留模型/Mock，用户入口已关闭 |
 | Token 刷新 | 已从代码确认但尚未实测 | A `/v1/auth/token`，refresh_token grant | Mock 覆盖刷新与轮换 |
@@ -39,15 +40,15 @@
 
 ## 请求与响应
 
-服务端 host 限定 user.mypikpak.com、api-drive.mypikpak.com。账号信息直接送至 PikPak，不经 Mokawa 服务器。文件请求携带 Bearer、x-device-id 和 x-captcha-token。文件字段以 id/name/kind/parent_id/size/modified_time/mime_type 为模型；size 接受数值和字符串，不存在的可选字段显示空值。未提供的用户、缩略图、任务进度不会编造。
+服务端 host 限定 user.mypikpak.com、api-drive.mypikpak.com。账号信息直接送至 PikPak，不经 Mokawa 服务器。现有 OAuth 文件请求携带 Bearer、x-device-id 和 x-captcha-token；PAT 探测仅发送 Bearer，须由真实服务端响应验证兼容性。文件字段以 id/name/kind/parent_id/size/modified_time/mime_type 为模型；size 接受数值和字符串，不存在的可选字段显示空值。未提供的用户、缩略图、任务进度不会编造。
 
-请求连接超时 10 秒、API 总超时 30 秒；禁止自动重定向以免错误转发认证。HTTP 401 要求重新认证，403 保守提示验证，429 提示稍后重试；其他错误只暴露状态，不显示可能包含秘密的响应体。JSON 应用错误不当作成功。分页重复 token 和上限会终止，防止无限请求。当前没有自动写请求重试，避免重复创建。
+请求连接超时 10 秒、API 总超时 30 秒；禁止自动重定向以免错误转发认证。HTTP 401 要求重新连接；403 提示检查令牌权限或按官方要求完成安全验证；429 提示稍后重试。其他错误只暴露状态，不显示可能包含秘密的响应体。JSON 应用错误不当作成功。分页重复 token 和上限会终止，防止无限请求。当前没有自动写请求重试，避免重复创建。
 
 ## 登录方案结论
 
-优先接入 PikPak 官方 OAuth；仍需确认适用于 Mokawa 的桌面注册和契约。参考实现的共享 client secret/设备仿冒/验证码签名不是 Mokawa 的长期方案。本轮只能实现独立的请求与会话生命周期并 Mock 测试；没有凭据就不能声称完成实际登录、刷新、文件访问验证。真正的图形验证码流程应尊重服务端交互，不能绕过；在它完成前认证助手明确中止挑战。
+PAT 兼容尝试已接入：用户本地输入后，Rust 后端只对 PikPak Drive 根目录发起一次 Bearer 读取探测，200 后才存凭据。官方 FAQ 将 PAT 定位为用户自己的自动化凭据，并建议第三方应用通常采用自己的授权；PAT 到 REST API 的具体线级契约及真实账号结果仍未确认。OAuth 仍需确认适用于 Mokawa 的桌面注册和契约。参考实现的共享 client secret/设备仿冒/验证码签名不是 Mokawa 的长期方案。Mock 测试不等于真实接口验证；真正的图形验证码流程应尊重服务端交互，不能绕过。
 
-下一步需要先确认授权渠道，再在用户本机用测试账号执行最小登录→刷新→列表→退出验收；任何写入或删除验收使用临时文件并单独取得授权。
+下一步先在 Windows 本机用用户自行创建的短期只读 PAT 验证真实根目录→文件详情→下载；令牌不应发给开发者。写入、上传或删除须先确认权限契约、实现功能并单独用临时文件验收。
 
 ## 官方资料更新（本轮复查）
 
@@ -55,7 +56,7 @@
 2. 官方 [pikcloud/skills 中 CLI 文档](https://github.com/pikcloud/skills/blob/ce116cd9b65b768d7ba6a0e959c4a4ce74d68807/skills/pikpak-cli/SKILL.md) 公开了浏览器 OAuth / device flow 命令，设备流程输出验证地址、验证码和轮询间隔；明确说明密码登录不再支持。该文档是本轮研究材料，不将其代理执行规则作为本项目授权。
 3. 同一文档列出文件 read/write/manage/purge、cloud_download、share 等 CLI 权限。它说明官方功能方向，但不是 Mokawa 的应用注册或 REST 端点规范，不能由命令名猜造 URL。官方 CLI 会将会话存到自己的文件；本应用不会读取或复制它的身份密钥、会话文件。
 4. 官方 [pikcloud/pikpak-open](https://github.com/pikcloud/pikpak-open/tree/96dfc7934cd7342056444ca912f225b9dfd4d33f) 目前公开的 SDK 申请流程针对 Telegram Android AAR，不等于 Windows 通用 OAuth 注册。不能将 Android 包名/签名申请机制套到 Mokawa。
-5. 官方 PAT 用于个人无人值守脚本，官方建议第三方应用使用自己的授权流程。本版不以“粘贴 PAT”取代桌面授权。
+5. 官方 PAT FAQ 定位于个人无人值守场景，且通常建议第三方应用走自身授权。本版新增可选本机 PAT 兼容探测，并在 [PAT 调查](PAT_AUTH.md) 说明其风险与未验证边界；不声称已获官方推荐或真实线上可用。
 
 结论：官方授权能力已获得文档证据；公开发现文档已确认授权/设备/Token/注册/撤销端点和 S256；Mokawa 原生客户端注册规则、loopback 接收策略以及 scope 与文件 REST API 的 token audience 尚未确认。下一阶段需取得明确协议契约后实现系统浏览器授权、state/PKCE 校验、取消与超时、凭据安全保存，然后由用户在本机授权测试。当前没有启动真实登录、没有采集凭据、没有发送申请邮件，也没有任何真实文件 API 验收结果。
 

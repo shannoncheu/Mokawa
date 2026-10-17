@@ -3,8 +3,17 @@ use crate::{
     error::{Error, Result},
 };
 use secrecy::{ExposeSecret, SecretString};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthMethod {
+    #[default]
+    OAuth,
+    PersonalAccessToken,
+}
+
 #[derive(Clone, Deserialize)]
 pub struct Session {
     pub access_token: SecretString,
@@ -12,6 +21,8 @@ pub struct Session {
     pub captcha_token: SecretString,
     pub device_id: String,
     pub expires_at: u64,
+    #[serde(default)]
+    pub auth_method: AuthMethod,
 }
 impl std::fmt::Debug for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -20,7 +31,22 @@ impl std::fmt::Debug for Session {
 }
 impl Session {
     pub fn expired(&self) -> bool {
-        self.expires_at <= now().saturating_add(60)
+        self.auth_method == AuthMethod::OAuth && self.expires_at <= now().saturating_add(60)
+    }
+
+    pub fn from_personal_access_token(token: SecretString) -> Result<Self> {
+        let token = token.expose_secret();
+        if token.trim().is_empty() || token.len() > 2048 || token.chars().any(char::is_control) {
+            return Err(Error::Invalid("个人访问令牌格式"));
+        }
+        Ok(Self {
+            access_token: token.to_owned().into(),
+            refresh_token: String::new().into(),
+            captcha_token: String::new().into(),
+            device_id: String::new(),
+            expires_at: u64::MAX,
+            auth_method: AuthMethod::PersonalAccessToken,
+        })
     }
 }
 pub fn now() -> u64 {
@@ -95,9 +121,13 @@ impl Api {
             captcha_token: captcha.to_owned().into(),
             device_id: device_id.into(),
             expires_at: now().saturating_add(token.expires_in),
+            auth_method: AuthMethod::OAuth,
         })
     }
     pub async fn refresh(&self, registration: &Registration, session: &Session) -> Result<Session> {
+        if session.auth_method != AuthMethod::OAuth {
+            return Err(Error::Unauthorized);
+        }
         let token:Token = self.user_request("/v1/auth/token", &serde_json::json!({"client_id":registration.client_id,
             "client_secret":registration.client_secret.expose_secret(),"grant_type":"refresh_token","refresh_token":session.refresh_token.expose_secret()})).await?;
         if token.access_token.expose_secret().is_empty() {
@@ -109,6 +139,7 @@ impl Api {
                 .refresh_token
                 .unwrap_or_else(|| session.refresh_token.clone()),
             expires_at: now().saturating_add(token.expires_in),
+            auth_method: AuthMethod::OAuth,
             ..session.clone()
         })
     }

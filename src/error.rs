@@ -4,6 +4,8 @@ pub enum Error {
     Unauthorized,
     #[error("PikPak 要求安全验证，请在官方页面完成验证后重试。")]
     VerificationRequired,
+    #[error("PikPak 拒绝访问。请检查令牌权限，或按 PikPak 官方提示完成安全验证。")]
+    AccessDenied,
     #[error("请求过于频繁，请稍后重试。")]
     RateLimited,
     #[error("PikPak 请求失败（HTTP {0}）。")]

@@ -1,5 +1,5 @@
 use crate::{
-    auth::Session,
+    auth::{AuthMethod, Session},
     error::{Error, Result},
 };
 use reqwest::{Client, Method};
@@ -68,19 +68,47 @@ impl Api {
             .http
             .request(method, format!("{}{path}", self.drive))
             .bearer_auth(session.access_token.expose_secret())
-            .header("x-device-id", &session.device_id)
-            .header("x-captcha-token", session.captcha_token.expose_secret())
             .query(query);
+        if session.auth_method == AuthMethod::OAuth {
+            request = request
+                .header("x-device-id", &session.device_id)
+                .header("x-captcha-token", session.captcha_token.expose_secret());
+        }
         if let Some(body) = body {
             request = request.json(&body);
         }
         Self::decode(request.send().await?).await
     }
+
+    /// Verify a user-supplied PAT against the real PikPak Drive API with the
+    /// least-effect request currently needed by Mokawa: read one root entry.
+    pub async fn verify_personal_access_token(&self, session: &Session) -> Result<()> {
+        if session.auth_method != AuthMethod::PersonalAccessToken {
+            return Err(Error::Invalid("认证类型"));
+        }
+        let _: serde_json::Value = self
+            .drive_request(
+                session,
+                Method::GET,
+                "/drive/v1/files",
+                &[
+                    ("parent_id", String::new()),
+                    ("limit", "1".into()),
+                    (
+                        "filters",
+                        serde_json::json!({"trashed":{"eq":false}}).to_string(),
+                    ),
+                ],
+                None,
+            )
+            .await?;
+        Ok(())
+    }
     async fn decode<T: DeserializeOwned>(mut response: reqwest::Response) -> Result<T> {
         match response.status().as_u16() {
             401 => return Err(Error::Unauthorized),
             429 => return Err(Error::RateLimited),
-            403 => return Err(Error::VerificationRequired),
+            403 => return Err(Error::AccessDenied),
             200..=299 => {}
             s => return Err(Error::Http(s)),
         }
